@@ -586,7 +586,9 @@ def generate_cfg(cfg, base_dir):
                # 以下两项默认关闭，开启后改变输出契约，见 generate_cfg docstring
                "pace_variability", "auto_fit_deform",
                # 围栏容差（默认 0 = 原严格行为）与自适应幅度的上限
-               "fence_tolerance_pct", "deform_scale_max"}
+               "fence_tolerance_pct", "deform_scale_max",
+               # 出界是否报错：false 时完全跳过围栏校验
+               "fence_strict"}
     if cfg.keys()-allowed:
         raise ValueError(f"未知路线配置项：{sorted(cfg.keys()-allowed)}")
     if cfg.get("coordinate_system") not in ("GCJ-02", "WGS84"):
@@ -623,6 +625,11 @@ def generate_cfg(cfg, base_dir):
     # 围栏容差：允许给定比例的采样点落在可跑区域外。真人轨迹的进场/离场段
     # 与贴边抖动本就会踩出去，服务端也接受，本地 0 容差会把可用源全部拒掉。
     tolerance = number(cfg, "fence_tolerance_pct", 0.0, 0.0, 0.3)
+    # 出界是否报错：false 时完全不校验围栏，轨迹可能踩出边界但也照常生成。
+    fence_strict = cfg.get("fence_strict", True)
+    if not isinstance(fence_strict, bool):
+        raise ValueError(
+            f"fence_strict 必须是 JSON 布尔值 true/false，收到 {fence_strict!r}")
     # 自适应幅度的上限：>1 时先试放大幅度（与原轨迹差异更大），再逐步缩小。
     scale_max = number(cfg, "deform_scale_max", 1.0, 0.5, 2.0)
     exact = cfg.get("distance_m")
@@ -705,7 +712,7 @@ def generate_cfg(cfg, base_dir):
                 last = f"目标 {target:.1f} 米超过生成几何可用长度 {ln[-1]:.1f} 米（形变后可用长度）"
                 continue
             m_ = [position_at(cand, ln, m) for m in mileage]
-            if ring is not None:
+            if ring is not None and fence_strict:
                 try:
                     validate_polygon_route(m_, ring, tolerance)
                 except ValueError as exc:
@@ -736,7 +743,8 @@ def generate_cfg(cfg, base_dir):
                 "recodeCadence": rows[-1]["runStep"]*60/duration,
                 "recodePace": effective_pace,
                 "recodeDislikes": 0, "manageList": []}
-        validate_output_polygon(data, ring, tolerance)
+        if fence_strict:
+            validate_output_polygon(data, ring, tolerance)
         chord_m = cumulative(sampled)[-1]
         meta = {"synthetic": True, "engine": "deform",
                 "coordinate_system": cfg["coordinate_system"],

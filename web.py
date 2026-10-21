@@ -268,6 +268,9 @@ def build_preview(qs):
                 cfg["deform_scale_max"] = float(raw_sm)
             except ValueError:
                 return {"error": "形变幅度上限必须是数字（1.0~2.0）"}
+        # 出界是否报错：勾选「忽略越界」时完全不校验围栏
+        if (qs.get("nostrict") or [""])[0].strip() in ("1", "true", "on"):
+            cfg["fence_strict"] = False
         # 精确里程：填了就绕过 ±10% 抽签，直接用 distance_m。
         # 与 min/max 互斥（generate_cfg 要求 distance_m 落在给定区间内，
         # 同时给两者只会自相矛盾），所以有 exact 时忽略 min/max。
@@ -638,6 +641,7 @@ PAGE = """<!DOCTYPE html>
               <span class="mini-field tiny"><label for="deformMax">最长 / m</label><input id="deformMax" class="f" style="width:76px" placeholder="不限"></span>
               <span class="mini-field tiny" title="填了就精确使用该里程（distance_m），绕过 ±10% 抽签、也忽略最短/最长；源轨迹需足够长（只能截短不能拉长超过抽签范围）"><label for="deformExact">精确 / m</label><input id="deformExact" class="f" style="width:76px" placeholder="可选"></span>
               <span class="mini-field tiny" title="允许采样点落在可跑区域外的比例（%）。真人轨迹贴边时的定位抖动会踩出边界，本地严格校验会把可用源全部拒掉；0 = 严格"><label for="deformTol">容差 %</label><input id="deformTol" class="f" style="width:56px" placeholder="0"></span>
+              <span class="mini-field tiny" title="勾选后完全不校验越界：轨迹可能踩出可跑区域，但生成不会失败"><label for="deformNoStrict">忽略越界 <input type="checkbox" id="deformNoStrict" checked style="vertical-align:-2px"></label></span>
               <span class="mini-field tiny" title="自适应幅度的上限（1.0~2.0）。>1 时先试放大幅度，生成的轨迹与原轨迹差异更大、重复度更低"><label for="deformScaleMax">幅度上限</label><input id="deformScaleMax" class="f" style="width:56px" placeholder="1.0"></span>
               <span class="mini-field tiny" title="0~0.6；留空或 0 = 匀速（保持既有行为）。>0 时按低频 OU 调制逐段里程，总里程与总时长不变"><label for="deformVar">速度起伏</label><input id="deformVar" class="f" style="width:56px" placeholder="0"></span>
               <span class="mini-field tiny" title="围栏越界时按固定比例自动收敛形变幅度重试，而不是直接报错"><label for="deformFit">形变自适应 <input type="checkbox" id="deformFit" style="vertical-align:-2px"></label></span>
@@ -762,6 +766,7 @@ async function preview(){ const s=document.getElementById('scheme').value;
                 if(mx) q.set('max',mx); }
          const tl=document.getElementById('deformTol').value.trim();
          if(tl) q.set('tol',tl);
+         if(document.getElementById('deformNoStrict').checked) q.set('nostrict','1');
          const sm=document.getElementById('deformScaleMax').value.trim();
          if(sm) q.set('scalemax',sm);
          const vr=document.getElementById('deformVar').value.trim();
