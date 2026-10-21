@@ -53,6 +53,16 @@ def list_geojsons():
                   if f.endswith(".geojson") and not f.lower().startswith("fence"))
 
 
+def list_fences():
+    """可作可跑区域（单环 Polygon）的 GeoJSON：examples/routes/ 全部 + 仓库根目录。"""
+    out = []
+    if os.path.isdir(ROUTES_DIR):
+        out.extend(f"examples/routes/{f}" for f in sorted(os.listdir(ROUTES_DIR))
+                   if f.endswith(".geojson"))
+    out.extend(f for f in sorted(os.listdir(BASE_DIR)) if f.endswith(".geojson"))
+    return out
+
+
 def list_sources():
     """形变方案的"任选底图 json"清单：任务表 + 任意 GeoJSON（仓库相对路径）。
 
@@ -243,13 +253,38 @@ def build_preview(qs):
             if not os.path.exists(poly_path):
                 return {"error": "围栏文件不存在：" + poly}
             cfg["allowed_polygon_geojson"] = poly_path
-        for key, qk, label in (("min_distance_m", "min", "最短里程"), ("max_distance_m", "max", "最长里程")):
-            raw = (qs.get(qk) or [""])[0].strip()
-            if raw:
-                try:
-                    cfg[key] = float(raw)
-                except ValueError:
-                    return {"error": f"{label}必须是数字（留空=不限制）"}
+        # 围栏容差与形变幅度上限（高级项）
+        raw_tol = (qs.get("tol") or [""])[0].strip()
+        if raw_tol:
+            try:
+                pct = float(raw_tol)
+            except ValueError:
+                return {"error": "围栏容差必须是数字（百分比，如 12 表示 12%）"}
+            # 兼容两种写法：12 → 0.12，0.12 → 0.12
+            cfg["fence_tolerance_pct"] = pct/100.0 if pct > 1 else pct
+        raw_sm = (qs.get("scalemax") or [""])[0].strip()
+        if raw_sm:
+            try:
+                cfg["deform_scale_max"] = float(raw_sm)
+            except ValueError:
+                return {"error": "形变幅度上限必须是数字（1.0~2.0）"}
+        # 精确里程：填了就绕过 ±10% 抽签，直接用 distance_m。
+        # 与 min/max 互斥（generate_cfg 要求 distance_m 落在给定区间内，
+        # 同时给两者只会自相矛盾），所以有 exact 时忽略 min/max。
+        raw_exact = (qs.get("exact") or [""])[0].strip()
+        if raw_exact:
+            try:
+                cfg["distance_m"] = float(raw_exact)
+            except ValueError:
+                return {"error": "精确里程必须是数字（留空=按区间/抽签）"}
+        else:
+            for key, qk, label in (("min_distance_m", "min", "最短里程"), ("max_distance_m", "max", "最长里程")):
+                raw = (qs.get(qk) or [""])[0].strip()
+                if raw:
+                    try:
+                        cfg[key] = float(raw)
+                    except ValueError:
+                        return {"error": f"{label}必须是数字（留空=不限制）"}
         try:
             # generate_cfg 内部用 base_dir/polygon_path 拼路径，必须传 Path：
             # BASE_DIR 是字符串，直接传会让带围栏的预览报 str / str。
@@ -601,9 +636,12 @@ PAGE = """<!DOCTYPE html>
               <span class="mini-field tiny"><label for="deformInterval">采样间隔 / s</label><input id="deformInterval" class="f" style="width:56px" value="2"></span>
               <span class="mini-field tiny"><label for="deformMin">最短 / m</label><input id="deformMin" class="f" style="width:76px" placeholder="不限"></span>
               <span class="mini-field tiny"><label for="deformMax">最长 / m</label><input id="deformMax" class="f" style="width:76px" placeholder="不限"></span>
+              <span class="mini-field tiny" title="填了就精确使用该里程（distance_m），绕过 ±10% 抽签、也忽略最短/最长；源轨迹需足够长（只能截短不能拉长超过抽签范围）"><label for="deformExact">精确 / m</label><input id="deformExact" class="f" style="width:76px" placeholder="可选"></span>
+              <span class="mini-field tiny" title="允许采样点落在可跑区域外的比例（%）。真人轨迹贴边时的定位抖动会踩出边界，本地严格校验会把可用源全部拒掉；0 = 严格"><label for="deformTol">容差 %</label><input id="deformTol" class="f" style="width:56px" placeholder="0"></span>
+              <span class="mini-field tiny" title="自适应幅度的上限（1.0~2.0）。>1 时先试放大幅度，生成的轨迹与原轨迹差异更大、重复度更低"><label for="deformScaleMax">幅度上限</label><input id="deformScaleMax" class="f" style="width:56px" placeholder="1.0"></span>
               <span class="mini-field tiny" title="0~0.6；留空或 0 = 匀速（保持既有行为）。>0 时按低频 OU 调制逐段里程，总里程与总时长不变"><label for="deformVar">速度起伏</label><input id="deformVar" class="f" style="width:56px" placeholder="0"></span>
               <span class="mini-field tiny" title="围栏越界时按固定比例自动收敛形变幅度重试，而不是直接报错"><label for="deformFit">形变自适应 <input type="checkbox" id="deformFit" style="vertical-align:-2px"></label></span>
-              <span class="mini-field tiny" title="可选：可跑区域 GeoJSON（单环 Polygon）。填了才会校验越界，形变自适应也才有意义"><label for="deformPoly">围栏</label><input id="deformPoly" class="f" style="width:150px" placeholder="可选 .geojson"></span>
+              <span class="mini-field tiny" title="可选：可跑区域 GeoJSON（单环 Polygon）。填了才会校验越界，形变自适应也才有意义"><label for="deformPoly">围栏</label><select id="deformPoly"><option value="">不使用</option></select></span>
             </span>
             <button class="btn preview-button" onclick="preview()"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h4l3-7 4 14 3-7h2"/></svg>刷新预览</button>
           </div>
@@ -668,6 +706,8 @@ async function boot(){ meta=await j('/api/meta');
   for(const k of Object.keys(meta.campuses)){ const o=document.createElement('option');o.value=k;o.textContent=k;c.appendChild(o);} 
   const ss=document.getElementById('srcSel'); ss.innerHTML='';
   for(const k of meta.sources){ const o=document.createElement('option');o.value=k;o.textContent=k;ss.appendChild(o);} 
+  const ps=document.getElementById('deformPoly'); ps.innerHTML='<option value="">不使用</option>';
+  for(const k of (meta.polygons||[])){ const o=document.createElement('option');o.value=k;o.textContent=k;ps.appendChild(o);} 
   taskFill(); c.onchange=taskFill; loadCfg();
   document.getElementById('selflink').href=location.href;
   document.getElementById('selflink').textContent=location.href;
@@ -716,8 +756,14 @@ async function preview(){ const s=document.getElementById('scheme').value;
          q.set('interval',document.getElementById('deformInterval').value||'2');
          const mn=document.getElementById('deformMin').value.trim();
          const mx=document.getElementById('deformMax').value.trim();
-         if(mn) q.set('min',mn);
-         if(mx) q.set('max',mx);
+         const ex=document.getElementById('deformExact').value.trim();
+         if(ex){ q.set('exact',ex); }            /* 精确里程优先，忽略区间 */
+         else { if(mn) q.set('min',mn);
+                if(mx) q.set('max',mx); }
+         const tl=document.getElementById('deformTol').value.trim();
+         if(tl) q.set('tol',tl);
+         const sm=document.getElementById('deformScaleMax').value.trim();
+         if(sm) q.set('scalemax',sm);
          const vr=document.getElementById('deformVar').value.trim();
          if(vr && parseFloat(vr)>0) q.set('variability',vr);
          if(document.getElementById('deformFit').checked) q.set('autofit','1');
@@ -801,7 +847,8 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/":
             self._send(200, "text/html", PAGE.replace("__URL__", f"http://127.0.0.1:{PORT}/"))
         elif u.path == "/api/meta":
-            self._json({"campuses": list_campuses(), "sources": list_sources()})
+            self._json({"campuses": list_campuses(), "sources": list_sources(),
+                        "polygons": list_fences()})
         elif u.path == "/api/config":
             try:
                 self._json(read_config_masked())

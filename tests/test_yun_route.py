@@ -504,3 +504,38 @@ def test_manage_list_index_ignores_inf_and_nan():
         ra_run_area="area", ra_id=1, ra_type="T1", record_id=1,
         duration_s=600, record_start_time="2026-01-01 00:00:00")
     assert [x["index"] for x in body["manageList"]] == [0, 0, 0, 3]
+
+
+# --------------------------------------------------------------------------
+# 围栏容差与形变幅度上限
+# --------------------------------------------------------------------------
+def test_fence_tolerance_allows_outliers():
+    """容差 > 0 时允许给定比例的采样点越界；默认 0 保持严格。
+
+    真人轨迹有 1%~8% 的点踩在边界外（进场/离场段与贴边抖动），服务端
+    也接受这类历史数据，本地 0 容差会把可用源全部拒掉。
+    """
+    ring = [(0.0, 0.0), (0.001, 0.0), (0.001, 0.001), (0.0, 0.001)]
+    route = [(0.0005, 0.0005), (0.0020, 0.0005)]      # 约一半采样点在外
+    with pytest.raises(ValueError, match='超出'):
+        R.validate_polygon_route(route, ring)
+    with pytest.raises(ValueError, match='容差'):
+        R.validate_polygon_route(route, ring, tolerance_pct=0.3)
+    R.validate_polygon_route(route, ring, tolerance_pct=0.6)
+
+
+def test_fence_tolerance_out_of_range(tmp_path):
+    with pytest.raises(ValueError, match='fence_tolerance_pct'):
+        R.generate(config(tmp_path, fence_tolerance_pct=0.5))
+
+
+@pytest.mark.parametrize('bad', [0.1, 3.0])
+def test_deform_scale_max_range(tmp_path, bad):
+    with pytest.raises(ValueError, match='deform_scale_max'):
+        R.generate(config(tmp_path, auto_fit_deform=True, deform_scale_max=bad))
+
+
+def test_deform_scale_max_above_one_tries_larger_first(tmp_path):
+    """上限 >1 时应从上限往下试：没有围栏时第一档（即上限）直接通过。"""
+    task = R.generate(config(tmp_path, auto_fit_deform=True, deform_scale_max=2.0))
+    assert task['metadata']['deform_scale'] == pytest.approx(2.0)

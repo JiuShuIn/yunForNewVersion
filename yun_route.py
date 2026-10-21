@@ -511,9 +511,16 @@ def inside(point, ring):
     return result
 
 
-def validate_polygon_route(route, ring):
-    # 以线段与全部边界的交点切分，再检查每段中点；狭窄凹口不会被采样跳过。
+def validate_polygon_route(route, ring, tolerance_pct=0.0):
+    """以线段与全部边界的交点切分，再检查每段中点；狭窄凹口不会被采样跳过。
+
+    tolerance_pct > 0 时允许给定比例的采样点落在区域外。真人轨迹的进场/离场
+    段与贴边时的定位抖动本来就会踩出边界（实测历史任务表有 1%~8% 的点在外，
+    服务端仍判合格），本地 0 容差会把可用的源轨迹全部拒掉。默认 0 保持原行为。
+    """
     edges = list(zip(ring, ring[1:]+ring[:1]))
+    total = 0
+    outside = 0
     for a, b in zip(route, route[1:]):
         cuts = [0.0, 1.0]
         for c, d in edges:
@@ -521,14 +528,23 @@ def validate_polygon_route(route, ring):
         cuts = sorted(set(cuts))
         for f in cuts[:1]+[(x+y)/2 for x, y in zip(cuts, cuts[1:])]+cuts[-1:]:
             p = (a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f)
+            total += 1
             if not inside(p, ring):
-                raise ValueError('生成路线有点或线段超出配置的可跑区域')
+                outside += 1
+    if not outside or not total:
+        return
+    ratio = outside/total
+    if ratio > tolerance_pct + 1e-12:
+        raise ValueError(
+            f'生成路线有点或线段超出配置的可跑区域'
+            f'（{outside}/{total} 个采样点越界 = {ratio*100:.1f}%，'
+            f'容差 {tolerance_pct*100:.1f}%）')
 
 
-def validate_output_polygon(data, ring):
+def validate_output_polygon(data, ring, tolerance_pct=0.0):
     if ring is not None:
         points = [tuple(map(float, p['point'].split(','))) for p in data['pointsList']]
-        validate_polygon_route(points, ring)
+        validate_polygon_route(points, ring, tolerance_pct)
 
 
 # ---------------------------------------------------------------- 生成入口
@@ -568,7 +584,9 @@ def generate_cfg(cfg, base_dir):
                "min_distance_m", "max_distance_m", "pace_offset_pct", "cadence_offset_pct",
                "length_offset_pct",
                # 以下两项默认关闭，开启后改变输出契约，见 generate_cfg docstring
-               "pace_variability", "auto_fit_deform"}
+               "pace_variability", "auto_fit_deform",
+               # 围栏容差（默认 0 = 原严格行为）与自适应幅度的上限
+               "fence_tolerance_pct", "deform_scale_max"}
     if cfg.keys()-allowed:
         raise ValueError(f"未知路线配置项：{sorted(cfg.keys()-allowed)}")
     if cfg.get("coordinate_system") not in ("GCJ-02", "WGS84"):
@@ -602,6 +620,11 @@ def generate_cfg(cfg, base_dir):
         raise ValueError(
             f"auto_fit_deform 必须是 JSON 布尔值 true/false，收到 {raw_auto_fit!r}")
     auto_fit = raw_auto_fit
+    # 围栏容差：允许给定比例的采样点落在可跑区域外。真人轨迹的进场/离场段
+    # 与贴边抖动本就会踩出去，服务端也接受，本地 0 容差会把可用源全部拒掉。
+    tolerance = number(cfg, "fence_tolerance_pct", 0.0, 0.0, 0.3)
+    # 自适应幅度的上限：>1 时先试放大幅度（与原轨迹差异更大），再逐步缩小。
+    scale_max = number(cfg, "deform_scale_max", 1.0, 0.5, 2.0)
     exact = cfg.get("distance_m")
     if exact is not None:
         exact = number(cfg, "distance_m", 0, 10, 50000)
@@ -659,7 +682,15 @@ def generate_cfg(cfg, base_dir):
         times = list(range(0, duration+1, interval))
         # 形变：auto_fit_deform 开启时按固定比例序列收敛幅度，越界就缩一档重试。
         # 比例序列是常量，同 seed + 同显式参数仍可复现。
-        scales = (1.0, 0.72, 0.52, 0.37, 0.26, 0.18, 0.13) if auto_fit else (1.0,)
+        # 形变：auto_fit_deform 开启时按比例序列搜索幅度，越界就换下一档。
+        # 从 deform_scale_max 往下试，第一个满足容差的就是"最大可行幅度"——
+        # 幅度越大，轨迹与原轨迹的差异越大，重复度越低。
+        if auto_fit:
+            candidates = (scale_max, 1.25, 1.0, 0.85, 0.72, 0.6, 0.5, 0.37, 0.26, 0.18, 0.13)
+            scales = tuple(sorted({s for s in candidates if s <= scale_max + 1e-9},
+                                  reverse=True))
+        else:
+            scales = (1.0,)
         route = lengths = sampled = None
         used_scale = 1.0
         for ds in scales:
@@ -676,7 +707,7 @@ def generate_cfg(cfg, base_dir):
             m_ = [position_at(cand, ln, m) for m in mileage]
             if ring is not None:
                 try:
-                    validate_polygon_route(m_, ring)
+                    validate_polygon_route(m_, ring, tolerance)
                 except ValueError as exc:
                     # 默认路径保持原文案（tests/test_yun_route.py 匹配"超出"）
                     last = (f"目标 {target:.1f} 米、形变幅度 x{ds:.2f} 时仍超出可跑区域（{exc}）"
@@ -705,7 +736,7 @@ def generate_cfg(cfg, base_dir):
                 "recodeCadence": rows[-1]["runStep"]*60/duration,
                 "recodePace": effective_pace,
                 "recodeDislikes": 0, "manageList": []}
-        validate_output_polygon(data, ring)
+        validate_output_polygon(data, ring, tolerance)
         chord_m = cumulative(sampled)[-1]
         meta = {"synthetic": True, "engine": "deform",
                 "coordinate_system": cfg["coordinate_system"],
