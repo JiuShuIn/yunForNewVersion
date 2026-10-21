@@ -259,12 +259,21 @@ def build_preview(qs):
         md, data = task["metadata"], task["data"]
         points, ref_metrics = yun_route.load_source(src_path)
         rows = data["pointsList"]
+        # 围栏多边形：画在地图上，便于判断轨迹与活动边界的关系。
+        fence = None
+        if cfg.get("allowed_polygon_geojson"):
+            try:
+                fence = [[float(a), float(b)]
+                         for a, b in yun_route.allowed_polygon(cfg["allowed_polygon_geojson"])]
+            except ValueError as exc:
+                return {"error": "围栏解析失败：" + str(exc)}
         try:
             command = _plan_deform(cfg, task)
         except ValueError as exc:
             return {"error": str(exc)}
         return {"ref": [[p[0], p[1]] for p in points],
                 "send": [[float(x) for x in r["point"].split(",")] for r in rows],
+                "fence": fence,
                 "ref_name": f"参考原轨迹：{src}",
                 "send_name": (f"合成任务（seed={md['seed']}，第 {md['attempt']} 次抽中"
                               + (f"，形变×{md['deform_scale']:.2f}"
@@ -638,7 +647,7 @@ PAGE = """<!DOCTYPE html>
   </div>
 </div>
 <script>
-let offset=0, map=null, refLayer=null, sendLayer=null, meta=null, leafletOK=(typeof L!=='undefined');
+let offset=0, map=null, refLayer=null, sendLayer=null, fenceLayer=null, meta=null, leafletOK=(typeof L!=='undefined');
 let lastPlan=null, lastWarn='';   // ②最近一次成功预览：③的命令唯一来源
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   document.querySelectorAll('.tab,.pane').forEach(x=>x.classList.remove('on'));
@@ -646,6 +655,8 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   if(t.dataset.p==='p2'){ if(!map&&leafletOK){ map=L.map('map');
       L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
         {subdomains:['1','2','3','4'],maxNativeZoom:18,maxZoom:20,attribution:'© 高德'}).addTo(map);
+      fenceLayer=L.polygon([],{color:'#e67e22',weight:2,dashArray:'6,4',
+        fillColor:'#e67e22',fillOpacity:0.07}).addTo(map);
       refLayer=L.polyline([],{color:'#999',dashArray:'6,4',weight:3}).addTo(map);
       sendLayer=L.polyline([],{color:'#2379f6',weight:4}).addTo(map); }
     if(map) setTimeout(()=>map.invalidateSize(),50); }
@@ -716,7 +727,7 @@ async function preview(){ const s=document.getElementById('scheme').value;
   if(d.error){ lastPlan=null; lastWarn=''; renderCmd();
     info.innerHTML='<b style=color:#c00>预览失败：'+d.error+'</b>'+
     (d.window_hint?'<br><span style=color:#a60>'+d.window_hint+'</span>':'');
-    if(leafletOK){ refLayer.setLatLngs([]); sendLayer.setLatLngs([]); }   /* 失败即清图，③同步失效 */
+    if(leafletOK && refLayer){ refLayer.setLatLngs([]); sendLayer.setLatLngs([]); fenceLayer.setLatLngs([]); }   /* 失败即清图，③同步失效 */
     return; }
   lastPlan=d.command||null; lastWarn=d.warn||''; renderCmd();
   if(d.metrics){ const m=d.metrics; const f=(v,u,s)=>v===null||v===undefined?'—':(v+(u||''));
@@ -744,8 +755,15 @@ async function preview(){ const s=document.getElementById('scheme').value;
                    (d.warn?'<div class="gate-warn">'+d.warn+'</div>':'');
   }
   if(!leafletOK){ info.innerHTML+='<br><b>Leaflet CDN 未能加载（离线？），地图不可用</b>'; return; }
+  /* boot() 结尾会先跑一次 preview()，那时还没切到本选项卡、地图未初始化，
+     refLayer/sendLayer/fenceLayer 均为 null；这里必须先挡住。 */
+  if(!refLayer){ info.innerHTML+='<br><span style="color:#a60">地图尚未初始化：切到「路线预览」选项卡后会自动重画</span>'; return; }
+  if(d.fence && d.fence.length){ fenceLayer.setLatLngs(d.fence.map(p=>[p[1],p[0]]));
+    fenceLayer.bindTooltip('可跑区域 · '+d.fence.length+' 顶点',{sticky:true}); }
+  else { fenceLayer.setLatLngs([]); fenceLayer.unbindTooltip(); }
   refLayer.setLatLngs(d.ref.map(p=>[p[1],p[0]])); sendLayer.setLatLngs(d.send.map(p=>[p[1],p[0]]));
-  if(d.ref.length){ map.fitBounds(L.latLngBounds(d.ref.map(p=>[p[1],p[0]])).pad(0.12)); }
+  const acc=(d.ref||[]).concat(d.fence||[]);      /* 视野同时容纳轨迹与围栏 */
+  if(acc.length){ map.fitBounds(L.latLngBounds(acc.map(p=>[p[1],p[0]])).pad(0.12)); }
   sendLayer.bindTooltip(d.send_name+' · '+d.send_km+' km',{sticky:true}); }
 
 async function runMain(){ const r=await j('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},
