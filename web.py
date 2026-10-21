@@ -10,6 +10,7 @@ import threading
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -224,6 +225,24 @@ def build_preview(qs):
             return {"error": "seed / 采样间隔必须是整数"}
         cfg = {"source_json": src_path, "coordinate_system": "GCJ-02",
                "seed": seed, "sample_seconds": interval}
+        # 速度起伏（默认关闭）：>0 时按低频 OU 调制逐段里程，总里程与总时长不变。
+        # 上限 0.6 与 yun_route 的 number() 校验保持一致，越界由后端报错。
+        raw_var = (qs.get("variability") or [""])[0].strip()
+        if raw_var:
+            try:
+                cfg["pace_variability"] = float(raw_var)
+            except ValueError:
+                return {"error": "速度起伏必须是数字（0~0.6，留空=关闭）"}
+        # 形变自适应（默认关闭）：围栏越界时按固定比例收敛幅度重试。
+        if (qs.get("autofit") or [""])[0].strip() in ("1", "true", "on"):
+            cfg["auto_fit_deform"] = True
+        # 可跑区域（可选）：没有它就没有"越界"可言，auto_fit_deform 不会触发。
+        poly = (qs.get("poly") or [""])[0].strip()
+        if poly:
+            poly_path = poly if os.path.isabs(poly) else os.path.join(BASE_DIR, poly)
+            if not os.path.exists(poly_path):
+                return {"error": "围栏文件不存在：" + poly}
+            cfg["allowed_polygon_geojson"] = poly_path
         for key, qk, label in (("min_distance_m", "min", "最短里程"), ("max_distance_m", "max", "最长里程")):
             raw = (qs.get(qk) or [""])[0].strip()
             if raw:
@@ -232,7 +251,9 @@ def build_preview(qs):
                 except ValueError:
                     return {"error": f"{label}必须是数字（留空=不限制）"}
         try:
-            task = yun_route.generate_cfg(cfg, BASE_DIR)
+            # generate_cfg 内部用 base_dir/polygon_path 拼路径，必须传 Path：
+            # BASE_DIR 是字符串，直接传会让带围栏的预览报 str / str。
+            task = yun_route.generate_cfg(cfg, Path(BASE_DIR))
         except ValueError as exc:
             return {"error": str(exc), "window_hint": "可放宽最短/最长里程，或改 seed 重抽"}
         md, data = task["metadata"], task["data"]
@@ -245,7 +266,10 @@ def build_preview(qs):
         return {"ref": [[p[0], p[1]] for p in points],
                 "send": [[float(x) for x in r["point"].split(",")] for r in rows],
                 "ref_name": f"参考原轨迹：{src}",
-                "send_name": f"合成任务（seed={md['seed']}，第 {md['attempt']} 次抽中）",
+                "send_name": (f"合成任务（seed={md['seed']}，第 {md['attempt']} 次抽中"
+                              + (f"，形变×{md['deform_scale']:.2f}"
+                                 if md.get("deform_scale", 1.0) != 1.0 else "")
+                              + "）"),
                 "send_km": data["recordMileage"],
                 "metrics": {
                     "ref_len_km": round(ref_metrics["length_m"]/1000.0, 3),
@@ -258,6 +282,8 @@ def build_preview(qs):
                     "interval_s": md["interval_s"], "step_m": md["step_m"],
                     "points": len(rows), "attempt": md["attempt"],
                     "window": md["distance_window_m"],
+                    "deform_scale": md.get("deform_scale", 1.0),
+                    "pace_variability": md.get("pace_variability", 0.0),
                 },
                 "note": f"输入 {len(points)} 点 → 输出 {len(rows)} 点",
                 "command": command, "warn": _cadence_gate_warn(data["recodeCadence"])}
@@ -566,6 +592,9 @@ PAGE = """<!DOCTYPE html>
               <span class="mini-field tiny"><label for="deformInterval">采样间隔 / s</label><input id="deformInterval" class="f" style="width:56px" value="2"></span>
               <span class="mini-field tiny"><label for="deformMin">最短 / m</label><input id="deformMin" class="f" style="width:76px" placeholder="不限"></span>
               <span class="mini-field tiny"><label for="deformMax">最长 / m</label><input id="deformMax" class="f" style="width:76px" placeholder="不限"></span>
+              <span class="mini-field tiny" title="0~0.6；留空或 0 = 匀速（保持既有行为）。>0 时按低频 OU 调制逐段里程，总里程与总时长不变"><label for="deformVar">速度起伏</label><input id="deformVar" class="f" style="width:56px" placeholder="0"></span>
+              <span class="mini-field tiny" title="围栏越界时按固定比例自动收敛形变幅度重试，而不是直接报错"><label for="deformFit">形变自适应 <input type="checkbox" id="deformFit" style="vertical-align:-2px"></label></span>
+              <span class="mini-field tiny" title="可选：可跑区域 GeoJSON（单环 Polygon）。填了才会校验越界，形变自适应也才有意义"><label for="deformPoly">围栏</label><input id="deformPoly" class="f" style="width:150px" placeholder="可选 .geojson"></span>
             </span>
             <button class="btn preview-button" onclick="preview()"><svg class="svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h4l3-7 4 14 3-7h2"/></svg>刷新预览</button>
           </div>
@@ -677,7 +706,12 @@ async function preview(){ const s=document.getElementById('scheme').value;
          const mn=document.getElementById('deformMin').value.trim();
          const mx=document.getElementById('deformMax').value.trim();
          if(mn) q.set('min',mn);
-         if(mx) q.set('max',mx); }
+         if(mx) q.set('max',mx);
+         const vr=document.getElementById('deformVar').value.trim();
+         if(vr && parseFloat(vr)>0) q.set('variability',vr);
+         if(document.getElementById('deformFit').checked) q.set('autofit','1');
+         const pl=document.getElementById('deformPoly').value.trim();
+         if(pl) q.set('poly',pl); }
   const d=await j('/api/routes?'+q); const info=document.getElementById('pvinfo');
   if(d.error){ lastPlan=null; lastWarn=''; renderCmd();
     info.innerHTML='<b style=color:#c00>预览失败：'+d.error+'</b>'+
@@ -697,7 +731,10 @@ async function preview(){ const s=document.getElementById('scheme').value;
       '</td><td style="padding:3px 10px"><b>'+f(m.send_cadence,' spm')+'</b></td></tr>'+
       '</table>'+
       '<div style="font-size:12px;color:#567;margin-top:4px">'+m.points+' 点 ｜ 间隔 '+m.interval_s+
-      's ｜ 每点 '+m.step_m+' m ｜ 几何弦长 '+m.chord_km+' km ｜ '+d.send_name+
+      's ｜ 每点 '+m.step_m+' m ｜ 几何弦长 '+m.chord_km+' km ｜ '+
+      (m.pace_variability>0?'速度起伏 '+m.pace_variability+' ｜ ':'')+
+      (m.deform_scale!==1.0?'形变×'+m.deform_scale.toFixed(2)+' ｜ ':'')+
+      d.send_name+
       (m.window?' ｜ 里程区间 ['+m.window[0]+', '+m.window[1]+']':'')+'</div>'+
       (d.warn?'<div class="gate-warn">'+d.warn+'</div>':'');
   } else {
