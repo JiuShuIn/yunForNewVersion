@@ -428,3 +428,79 @@ def test_polygon_detects_narrow_concavity_between_samples():
                                   (117.000040, 31.0)], ring)
     R.validate_polygon_route([(117.000025, 31.0),
                               (117.000040, 31.0)], ring)
+
+
+# --------------------------------------------------------------------------
+# 评审意见回归：speed_factors 的边界必须在归一化之后仍成立（P1）
+# --------------------------------------------------------------------------
+import random as _random
+
+
+@pytest.mark.parametrize('variability', [0.05, 0.1, 0.25, 0.4, 0.6])
+@pytest.mark.parametrize('n', [2, 3, 7, 50, 246])
+def test_speed_factors_bounds_hold_after_normalization(variability, n):
+    """先限幅再除以均值会重新越界（例 [0.65,1.5,1.5] → 最小 0.534）。
+
+    这里要求 min/max 落在声明范围内，且均值恰为 1。
+    """
+    factors = R.speed_factors(_random.Random(1234), n, variability)
+    assert len(factors) == n
+    assert min(factors) >= R.FACTOR_MIN - 1e-9
+    assert max(factors) <= R.FACTOR_MAX + 1e-9
+    assert abs(sum(factors) - n) < 1e-9
+
+
+def test_bounded_normalize_rejects_infeasible_total():
+    with pytest.raises(ValueError, match='无法同时满足逐项边界'):
+        R._bounded_normalize([1.0, 1.0], R.FACTOR_MIN, R.FACTOR_MAX, 10.0)
+
+
+def test_speed_factors_disabled_returns_unit_mean():
+    assert R.speed_factors(_random.Random(1), 10, 0.0) == [1.0]*10
+    assert R.speed_factors(_random.Random(1), 0, 0.3) == []
+
+
+# --------------------------------------------------------------------------
+# 评审意见回归：auto_fit_deform 必须是真正的 JSON 布尔（P1）
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize('bad', ["false", "0", "1", 1, 0, None, [True]])
+def test_auto_fit_deform_requires_real_bool(tmp_path, bad):
+    with pytest.raises(ValueError, match='JSON 布尔值'):
+        R.generate(config(tmp_path, auto_fit_deform=bad))
+
+
+def test_auto_fit_deform_accepts_real_bool(tmp_path):
+    for good in (True, False):
+        task = R.generate(config(tmp_path, auto_fit_deform=good))
+        assert task['data']['recordMileage'] > 0
+
+
+# --------------------------------------------------------------------------
+# 评审意见回归：默认配置的 metadata 不新增键（P1）
+# --------------------------------------------------------------------------
+def test_default_metadata_has_no_new_keys(tmp_path):
+    meta = R.generate(config(tmp_path))['metadata']
+    assert 'deform_scale' not in meta
+    assert 'pace_variability' not in meta
+
+
+def test_new_metadata_keys_only_when_enabled(tmp_path):
+    meta = R.generate(config(tmp_path, pace_variability=0.25))['metadata']
+    assert meta['pace_variability'] == 0.25
+    assert 'deform_scale' not in meta      # 未开 auto_fit 时不该出现
+
+
+# --------------------------------------------------------------------------
+# 评审意见回归：manageList.index 对 inf/nan 也要兜底（P2）
+# --------------------------------------------------------------------------
+def test_manage_list_index_ignores_inf_and_nan():
+    body = M._build_finish_body(
+        record_mileage_km=2.0, recode_cadence=160, recode_pace=5.0,
+        recode_dislikes=2,
+        manage_list=[{"point": "1,2", "marked": "Y", "index": float("inf")},
+                     {"point": "3,4", "marked": "Y", "index": float("nan")},
+                     {"point": "5,6", "marked": "N", "index": ""},
+                     {"point": "7,8", "marked": "N", "index": 3}],
+        ra_run_area="area", ra_id=1, ra_type="T1", record_id=1,
+        duration_s=600, record_start_time="2026-01-01 00:00:00")
+    assert [x["index"] for x in body["manageList"]] == [0, 0, 0, 3]

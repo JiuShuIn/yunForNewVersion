@@ -536,7 +536,9 @@ def _norm_manage_list(manage_list):
     for item in (manage_list or []):
         try:
             idx = int(float(item.get("index", 0) or 0))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            # OverflowError：int(float("inf")) / int(float("nan")) 会抛，
+            # 与空字符串一样属于脏数据，统一兜底为 0。
             idx = 0
         out.append({
             "point": str(item.get("point", "")),

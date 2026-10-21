@@ -333,28 +333,67 @@ def deform_geometry(source_points, *, seed=31337, profile=None):
     return deform_points(points, seed=int(seed), profile=merged)
 
 
+# 速度调制因子的硬边界：低于/高于此范围的瞬时速度不像人在跑。
+FACTOR_MIN = 0.65
+FACTOR_MAX = 1.5
+
+
+def _bounded_normalize(raw, lo, hi, total):
+    """把 raw 缩放到 sum=total，并严格满足每一项 ∈ [lo, hi]。
+
+    交替投影：先把越界项钉在边界，再把剩余差额均摊给未触界项，直到
+    两项约束同时成立。要求 n*lo <= total <= n*hi，否则无解直接报错。
+
+    这样才真正满足声明的边界——单纯"先限幅再除以均值"会在归一化后
+    重新越界（例如 [0.65, 1.5, 1.5] 归一化后最小值变成 0.534）。
+    """
+    n = len(raw)
+    if n == 0:
+        return []
+    if total < n*lo - 1e-9 or total > n*hi + 1e-9:
+        raise ValueError(
+            f"目标总量 {total:.6f} 不在 [{n*lo:.6f}, {n*hi:.6f}] 内，"
+            f"无法同时满足逐项边界 [{lo}, {hi}]")
+    s = sum(raw)
+    values = [x*total/s for x in raw] if s > 0 else [total/n]*n
+    for _ in range(64):
+        clamped = [min(hi, max(lo, x)) for x in values]
+        diff = total - sum(clamped)
+        if abs(diff) <= 1e-12:
+            return clamped
+        free = [i for i in range(n) if lo < clamped[i] < hi]
+        if not free:
+            # 总量可行时不应发生；保守返回已落在边界内的结果
+            return clamped
+        share = diff/len(free)
+        values = list(clamped)
+        for i in free:
+            values[i] = clamped[i] + share
+    return [min(hi, max(lo, x)) for x in values]
+
+
 def speed_factors(rng, n, variability):
-    """逐段速度调制因子：对数正态 OU 过程，均值归一为 1。
+    """逐段速度调制因子：对数正态 OU 过程，均值恰为 1，逐项 ∈ [0.65, 1.5]。
 
     仅当 pace_variability > 0 时使用（默认关闭）。按点序推进而非按弧长，
     因为要打散的是"时间维度的节奏起伏"，与几何形状无关。
     相关长度取全程 15%，使波动呈低频块状，而不是逐点白噪声。
 
-    因子限幅在 [0.65, 1.5]：不加限幅时对数正态尾部会产生非人类瞬时速度。
+    边界由 _bounded_normalize 在归一化之后施加，所以 sum 恰为 n（均值 1）
+    与逐项范围同时成立，不依赖分布本身的偶然性。
     """
     if variability <= 0 or n <= 0:
         return [1.0] * n
     tau = max(1.0, n * 0.15)
-    lo, hi = math.log(0.65), math.log(1.5)
+    lo_log, hi_log = math.log(FACTOR_MIN), math.log(FACTOR_MAX)
     x = 0.0
-    out = []
+    raw = []
     for _ in range(n):
         phi = math.exp(-1.0 / tau)
         x = phi * x + rng.gauss(0.0, variability * math.sqrt(max(0.0, 1.0 - phi * phi)))
-        x = max(lo, min(hi, x))
-        out.append(math.exp(x))
-    mean = sum(out) / len(out)
-    return [v / mean for v in out]
+        x = max(lo_log, min(hi_log, x))
+        raw.append(math.exp(x))
+    return _bounded_normalize(raw, FACTOR_MIN, FACTOR_MAX, float(n))
 
 
 def cumulative(points):
@@ -557,7 +596,12 @@ def generate_cfg(cfg, base_dir):
     # 开启后按低频 OU 调制逐段速度，总里程与总时长不变，仅打散"机器匀速"特征。
     variability = number(cfg, "pace_variability", 0.0, 0, 0.6)
     # 默认 False：越界仍按原行为报错。开启后按固定比例收敛形变幅度重试。
-    auto_fit = bool(cfg.get("auto_fit_deform", False))
+    # 严格校验类型：bool("false") 与 bool("0") 都是 True，配置写错会静默生效。
+    raw_auto_fit = cfg.get("auto_fit_deform", False)
+    if not isinstance(raw_auto_fit, bool):
+        raise ValueError(
+            f"auto_fit_deform 必须是 JSON 布尔值 true/false，收到 {raw_auto_fit!r}")
+    auto_fit = raw_auto_fit
     exact = cfg.get("distance_m")
     if exact is not None:
         exact = number(cfg, "distance_m", 0, 10, 50000)
@@ -663,19 +707,25 @@ def generate_cfg(cfg, base_dir):
                 "recodeDislikes": 0, "manageList": []}
         validate_output_polygon(data, ring)
         chord_m = cumulative(sampled)[-1]
-        return {"code": 200, "metadata": {
-            "synthetic": True, "engine": "deform", "coordinate_system": cfg["coordinate_system"],
-            "seed": seed, "source": source_path.name,
-            "source_length_m": round(metrics["length_m"], 3),
-            "source_pace_min_km": None if metrics["pace_min_km"] is None else round(metrics["pace_min_km"], 3),
-            "source_cadence_spm": None if metrics["cadence_spm"] is None else round(metrics["cadence_spm"], 3),
-            "pace_min_km": round(effective_pace, 3), "cadence_spm": cadence,
-            "interval_s": interval, "step_m": round(step_m, 6), "target_m": target,
-            "geometry_chord_m": round(chord_m, 3), "attempt": attempt, "attempts_limit": MAX_ATTEMPTS,
-            "distance_window_m": [low, high] if (low is not None or high is not None) else None,
-            "geometry_spacing_m": profile["spacing_m"], "deform_profile": profile,
-            "deform_scale": used_scale, "pace_variability": variability,
-            "server_verified": False}, "data": data}
+        meta = {"synthetic": True, "engine": "deform",
+                "coordinate_system": cfg["coordinate_system"],
+                "seed": seed, "source": source_path.name,
+                "source_length_m": round(metrics["length_m"], 3),
+                "source_pace_min_km": None if metrics["pace_min_km"] is None else round(metrics["pace_min_km"], 3),
+                "source_cadence_spm": None if metrics["cadence_spm"] is None else round(metrics["cadence_spm"], 3),
+                "pace_min_km": round(effective_pace, 3), "cadence_spm": cadence,
+                "interval_s": interval, "step_m": round(step_m, 6), "target_m": target,
+                "geometry_chord_m": round(chord_m, 3), "attempt": attempt,
+                "attempts_limit": MAX_ATTEMPTS,
+                "distance_window_m": [low, high] if (low is not None or high is not None) else None,
+                "geometry_spacing_m": profile["spacing_m"], "deform_profile": profile,
+                "server_verified": False}
+        # 只有真正启用了新行为才追加新键：默认配置的 metadata 与改动前一致。
+        if used_scale != 1.0:
+            meta["deform_scale"] = used_scale
+        if variability > 0:
+            meta["pace_variability"] = variability
+        return {"code": 200, "metadata": meta, "data": data}
     if attempts == 1:
         raise ValueError(last or "目标里程无法生成")
     span = metrics["length_m"]*length_offset
