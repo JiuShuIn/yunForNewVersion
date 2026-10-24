@@ -1085,9 +1085,13 @@ class Yun_For_New:
             data['recodeDislikes'] = len(chosen)
         km = float(data['recordMileage'])
         effective_km = min(km, self.distance_cap_m/1000)
-        if effective_km < max(float(self.raSingleMileageMin), self.server_min_mileage_km):
-            raise ValueError(f"生成里程 {km:.4f} km 不在任务范围 "
-                             f"{self.server_min_mileage_km}～{self.distance_cap_m/1000} km")
+        # 逐点累加的里程会差几个 ulp（2.000000 → 1.9999999），严格比较会把
+        # 正好卡在任务下限的轨迹误判为不足；留 1e-9 km（1 微米）容差。
+        floor_km = max(float(self.raSingleMileageMin), self.server_min_mileage_km)
+        if effective_km + 1e-9 < floor_km:
+            raise ValueError(f"生成里程 {km:.6f} km 不在任务范围 "
+                             f"{floor_km}～{self.distance_cap_m/1000} km"
+                             f"（含 single_mileage_*_offset）")
         if not float(self.raCadenceMin) <= data['recodeCadence'] <= float(self.raCadenceMax):
             raise ValueError("生成步频不在任务允许范围")
         if self.upload_batch_size < 2:
