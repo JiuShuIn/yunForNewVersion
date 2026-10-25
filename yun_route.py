@@ -42,8 +42,47 @@ PROFILE_LIMITS = {
     "length_gain_pct": (0.03, 0.0, 0.5),      # 几何长度校准（相对来源）
     "start_trim_m": (0.0, 0.0, 20000.0),      # 头/尾按弧长裁剪
     "end_trim_m": (0.0, 0.0, 20000.0),
+    # 航向扰动：真正改变**路径形状**，而不只是整体平移。
+    # 沿弧长推进的 OU 角度场，逐点旋转切线方向后重新积分成折线。
+    # 这是与"位移叠加"本质不同的一步——位移叠加保留拓扑（哪里拐弯、
+    # 绕几圈、自交模式都不变），航向扰动会改变曲率序列。
+    "heading_sigma_deg": (0.0, 0.0, 15.0),    # 航向偏转角强度（度）
+    "heading_tau_m": (150.0, 20.0, 2000.0),   # 航向偏转的相关长度（米）
 }
 DEMO_PROFILE = {k: v[0] for k, v in PROFILE_LIMITS.items()}
+
+# 「自然化」预设：在演示包尺度上加大位移、并开启航向扰动。
+# 与 DEMO_PROFILE 分开是为了保住 test_deform_matches_demo_scale 的复现基准——
+# 改 DEMO_PROFILE 会让历史演示包回归失败。
+NATURAL_PROFILE = dict(
+    DEMO_PROFILE,
+    lane_sigma_m=2.5,        # 法向摆动（档位会覆盖）
+    max_lane_m=7.0,          # 硬限幅：操场半宽约 40~60m，7m 不会跑出去
+    drift_sigma_m=3.5,       # 二维漂移（档位会覆盖）
+    jump_sigma_m=8.0,        # 偶发跳变 14 → 8（原来的 14m 单跳就出跑道了）
+    jump_rate_per_km=1.0,    # 频次 1.2 → 1.0
+    heading_sigma_deg=2.0,   # 航向扰动（档位会覆盖）
+    heading_tau_m=150.0,
+    length_gain_pct=0.0,     # 长度由 ds 序列决定，这里不再额外缩放
+)
+
+# 强度档位：GUI 用 1~3 档，避免用户直接调一堆物理量。
+# 强度档位。标定依据：合工大翡翠湖操场实测包围盒 82~120m × 166~190m，
+# 真人轨迹本来就贴着跑道边缘跑，偏移必须控制在这个尺度内，
+# 否则轨迹会跑出体育场（旧版 strong 档最大偏移 108m，明显越界）。
+#
+# 关键约束是 **max_lane_m（法向硬限幅）** 与 **drift_sigma_m（整体漂移）**：
+#   * 法向限幅决定单侧能摆出去多远；
+#   * 漂移是低频大范围位移，直接决定整条轨迹会不会整体偏出场地。
+# heading 只改曲率，累积误差由 drift/lane 兜住。
+NATURAL_STRENGTHS = {
+    "light":  dict(lane_sigma_m=1.5, max_lane_m=4.0, drift_sigma_m=2.0,
+                   heading_sigma_deg=1.0),
+    "medium": dict(lane_sigma_m=2.5, max_lane_m=7.0, drift_sigma_m=3.5,
+                   heading_sigma_deg=2.0),
+    "strong": dict(lane_sigma_m=3.5, max_lane_m=10.0, drift_sigma_m=5.0,
+                   heading_sigma_deg=3.0),
+}
 
 # 里程区间不满足时的重抽上限：连续这么多次都没抽中就直接失败（用户指定 5 次）。
 MAX_ATTEMPTS = 5
@@ -158,12 +197,21 @@ def load_source(path):
     """
     obj = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     points = extract_points(obj)
-    metrics = {"length_m": None, "pace_min_km": None, "cadence_spm": None}
     rows = None
     if isinstance(obj, dict) and isinstance(obj.get("data"), dict):
         rows = obj["data"].get("pointsList")
     elif isinstance(obj, dict) and isinstance(obj.get("pointsList"), list):
         rows = obj.get("pointsList")
+    return points, _source_metrics(points, rows)
+
+
+def _source_metrics(points, rows):
+    """由点列（和可选的 tasklist 行）算出长度/配速/步频指标。
+
+    行数据缺失（GeoJSON / 内存点列）时配速与步频为 None，
+    调用方会用 cfg 的名义值做基准。
+    """
+    metrics = {"length_m": None, "pace_min_km": None, "cadence_spm": None}
     if isinstance(rows, list) and len(rows) >= 2:
         try:
             miles = [float(r["runMileage"]) for r in rows]
@@ -187,7 +235,7 @@ def load_source(path):
                         metrics["cadence_spm"] = cadence
     if metrics["length_m"] is None:
         metrics["length_m"] = sum(distance(a, b) for a, b in zip(points, points[1:]))
-    return points, metrics
+    return metrics
 
 
 def local_projection(points):
@@ -263,16 +311,62 @@ def ou_distance(rng, s_values, tau_m, sigma_m):
     return out
 
 
+def bend_heading(points, rng, sigma_deg, tau_m):
+    """航向扰动：按弧长推进的 OU 角度场，逐点旋转切线后重新积分成折线。
+
+    与 deform_points 里的位移叠加有本质区别：
+      * 位移叠加是「原折线 + 位移场」，拓扑不变（拐弯位置、绕圈数、自交模式都在）；
+      * 航向扰动是「把每段的朝向改一点再走一遍」，曲率序列因此改变，
+        走出来的是一条**形状不同**的折线。
+
+    做法：
+      1. 在原始点列上按弧长做 OU 得到逐点转角 θ(s)（度）；
+      2. 逐段取原方向角 + θ，按原段长前进，得到新折线；
+      3. 每段长度按 (1 + 长度抖动) 缩放，让总里程也略有变化。
+
+    起点固定在原起点（跑步总是从同一个地方出发），误差随距离累积，
+    这正是"走同一条路但每次略有不同"的形态。
+    """
+    if sigma_deg <= 0 or len(points) < 3:
+        return list(points)
+    fwd, inv = local_projection(points)
+    xy = [fwd(p) for p in points]
+    ss = cumulative_xy(xy)
+    # 转角场：OU 过程，单位度
+    theta = ou_distance(rng, ss, tau_m, sigma_deg)
+    out = [xy[0]]
+    for i in range(1, len(xy)):
+        dx, dy = xy[i][0]-xy[i-1][0], xy[i][1]-xy[i-1][1]
+        seg = math.hypot(dx, dy)
+        if seg < 1e-9:
+            out.append(out[-1])
+            continue
+        ang = math.atan2(dy, dx) + math.radians(theta[i])
+        # 段长轻微抖动（±3%），让总里程也偏离原值一点
+        seg *= 1.0 + rng.uniform(-0.03, 0.03)
+        out.append((out[-1][0]+seg*math.cos(ang), out[-1][1]+seg*math.sin(ang)))
+    return [inv(q) for q in out]
+
+
 def deform_points(points, seed=31337, profile=None):
-    """核心形变：[(lon,lat), ...] -> [(lon,lat), ...]（实现与演示包一致）。"""
+    """核心形变：[(lon,lat), ...] -> [(lon,lat), ...]。
+
+    顺序很重要：
+      1. **先**做航向扰动（改变形状），
+      2. 再重采样、叠加位移场（法向摆动/漂移/跳变）。
+    反过来做的话，位移场会建立在已经扭曲的折线上，摆动方向会跟着乱掉。
+    """
     cfg = dict(DEMO_PROFILE)
     if profile:
         cfg.update(profile)
+    rng = random.Random(int(seed) ^ 0x8FFF)
+    if cfg.get("heading_sigma_deg", 0.0) > 0:
+        points = bend_heading(points, rng, cfg["heading_sigma_deg"],
+                              cfg["heading_tau_m"])
     base = resample(points, cfg["spacing_m"], cfg["start_trim_m"], cfg["end_trim_m"])
     fwd, inv = local_projection(base)
     xy = [fwd(p) for p in base]
     ss = cumulative_xy(xy)
-    rng = random.Random(int(seed) ^ 0x8FFF)
     lane = ou_distance(rng, ss, cfg["lane_tau_m"], cfg["lane_sigma_m"])
     dx = ou_distance(rng, ss, cfg["drift_tau_m"], cfg["drift_sigma_m"])
     dy = ou_distance(rng, ss, cfg["drift_tau_m"], cfg["drift_sigma_m"])
@@ -588,7 +682,9 @@ def generate_cfg(cfg, base_dir):
                # 围栏容差（默认 0 = 原严格行为）与自适应幅度的上限
                "fence_tolerance_pct", "deform_scale_max",
                # 出界是否报错：false 时完全跳过围栏校验
-               "fence_strict"}
+               "fence_strict",
+               # 内存来源（GUI 用）：直接给点列，不读文件
+               "source_points"}
     if cfg.keys()-allowed:
         raise ValueError(f"未知路线配置项：{sorted(cfg.keys()-allowed)}")
     if cfg.get("coordinate_system") not in ("GCJ-02", "WGS84"):
@@ -597,13 +693,22 @@ def generate_cfg(cfg, base_dir):
         cfg = dict(cfg, seed=secrets.randbits(63))
     cfg = dict(cfg, seed=number(cfg, 'seed', 31337, 0, 2**63-1, True))
     profile = profile_of(cfg)
-    source = cfg.get('source_json')
-    if not isinstance(source, str) or not source:
-        raise ValueError('必须提供 source_json：tasklist / GeoJSON / 坐标列表任一格式')
-    source_path = Path(source)
-    if not source_path.is_absolute():
-        source_path = base_dir/source
-    points, metrics = load_source(source_path)
+    # 来源二选一：source_points（内存点列，GUI 用）或 source_json（文件路径）
+    mem_points = cfg.get('source_points')
+    if mem_points is not None:
+        if not isinstance(mem_points, list) or len(mem_points) < 8:
+            raise ValueError('source_points 必须是至少 8 个点的坐标列表')
+        points = extract_points(mem_points)
+        metrics = _source_metrics(points, None)
+        source_path = Path('(inline)')
+    else:
+        source = cfg.get('source_json')
+        if not isinstance(source, str) or not source:
+            raise ValueError('必须提供 source_json 或 source_points')
+        source_path = Path(source)
+        if not source_path.is_absolute():
+            source_path = base_dir/source
+        points, metrics = load_source(source_path)
     interval = number(cfg, "sample_seconds", 1, 1, 5, True)
     # 基准值：cfg 里显式写了的优先（用于按学校规则固定配速/步频），没写的才取来源
     # 轨迹的实测总体值（这就是"和原轨迹偏移 ±10%"的基准）。

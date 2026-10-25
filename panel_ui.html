@@ -7,176 +7,398 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
+/* ============ 基础 ============ */
 :root{
-  --nav:#101a2c;--nav2:#16233a;--line:#e3e9f2;--bg:#f5f7fb;--surface:#fff;
-  --ink:#16213a;--ink2:#3d4a63;--muted:#77839a;--hint:#9aa6b8;
-  --blue:#3465e0;--blue2:#2851c4;--cyan:#12b5ad;--green:#1f9d63;
-  --red:#d33f4a;--amber:#c98213;--radius:14px;
-  --shadow:0 8px 28px rgba(28,48,88,.06);
+  --nav-a:#16233a;--nav-b:#0e1728;
+  --bg:#f6f8fc;--surface:#fff;
+  --line:#e5ebf4;--line-2:#eef2f8;
+  --ink:#16213a;--ink-2:#3d4a63;--muted:#7d8a9f;--hint:#98a5b8;
+  --blue:#3d6fe0;--blue-d:#2f5cc9;
+  --green:#22a86c;--green-d:#1b8f5b;
+  --amber:#c98213;--red:#d33f4a;
+  --radius:14px;
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);line-height:1.6;
-  font-family:Inter,"Segoe UI",-apple-system,"Microsoft YaHei","PingFang SC",sans-serif}
+body{
+  margin:0;background:var(--bg);color:var(--ink);
+  font-family:Inter,"Segoe UI",-apple-system,"Microsoft YaHei","PingFang SC",sans-serif;
+  font-size:14px;line-height:1.65;-webkit-font-smoothing:antialiased;
+}
 button,input,select{font:inherit}
 button{cursor:pointer}
-code,.mono{font-family:"Cascadia Code",Consolas,monospace}
+code{font-family:"Cascadia Code",Consolas,monospace;font-size:.92em}
 
-.shell{display:grid;grid-template-columns:232px minmax(0,1fr);min-height:100vh}
-.side{background:linear-gradient(170deg,#16233a,#0e1728);color:#fff;padding:26px 14px;
-  display:flex;flex-direction:column;gap:6px;position:sticky;top:0;height:100vh}
+/* ============ 骨架 ============ */
+.shell{display:grid;grid-template-columns:236px minmax(0,1fr);min-height:100vh}
+.main{min-width:0}
+.body{padding:20px 34px 70px;max-width:1440px}
+
+/* ============ 侧栏 ============ */
+.side{
+  background:linear-gradient(170deg,var(--nav-a),var(--nav-b));
+  color:#fff;padding:26px 14px;display:flex;flex-direction:column;
+  position:sticky;top:0;height:100vh;overflow-y:auto;
+}
 .brand{display:flex;align-items:center;gap:11px;padding:0 10px 26px}
-.brand .mk{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;
-  background:linear-gradient(140deg,rgba(18,181,173,.45),rgba(52,101,224,.35));
-  border:1px solid rgba(160,220,230,.25);font-size:18px}
-.brand b{font-size:15px;letter-spacing:.04em;display:block;line-height:1.25}
+.brand .mk{
+  width:38px;height:38px;border-radius:12px;display:grid;place-items:center;
+  background:linear-gradient(140deg,rgba(18,181,173,.45),rgba(61,111,224,.35));
+  border:1px solid rgba(160,220,230,.25);font-size:18px;flex:none;
+}
+.brand b{font-size:15px;letter-spacing:.04em;display:block;line-height:1.3}
 .brand span{font-size:9.5px;color:#8fa5c2;letter-spacing:.16em}
-.step{display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:10px;
-  color:#a6b6cf;font-size:13px;font-weight:600;cursor:pointer;border:1px solid transparent}
+
+.navgroup{margin-bottom:18px}
+.navgroup .gtitle{
+  font-size:9px;letter-spacing:.2em;color:#5d7a9e;font-weight:800;
+  padding:0 14px 8px;text-transform:uppercase;
+}
+.step{
+  display:flex;align-items:center;gap:11px;padding:10px 13px;border-radius:10px;
+  color:#a6b6cf;font-size:12.8px;font-weight:600;cursor:pointer;
+  border:1px solid transparent;transition:.15s;
+}
 .step:hover{background:rgba(255,255,255,.06);color:#eef6ff}
-.step.on{background:linear-gradient(95deg,rgba(52,101,224,.3),rgba(18,181,173,.08));
-  color:#fff;border-color:rgba(140,190,255,.14);box-shadow:inset 3px 0 0 #4fd4cc}
-.step .n{width:21px;height:21px;border-radius:50%;border:1.5px solid currentColor;
-  display:grid;place-items:center;font-size:11px;flex:none}
-.side .foot{margin-top:auto;padding:16px 12px 0;border-top:1px solid rgba(150,185,225,.13);
-  font-size:11px;color:#7f97b6}
+.step.on{
+  background:linear-gradient(95deg,rgba(61,111,224,.3),rgba(18,181,173,.08));
+  color:#fff;border-color:rgba(140,190,255,.14);
+  box-shadow:inset 3px 0 0 #4fd4cc,0 2px 12px rgba(0,0,0,.15);
+}
+.step .n{
+  width:20px;height:20px;border-radius:50%;border:1.5px solid currentColor;
+  display:grid;place-items:center;font-size:10.5px;font-weight:800;
+  flex:none;background:rgba(255,255,255,.05);line-height:1;
+}
+.step .tag{
+  margin-left:auto;font-size:9px;padding:1px 6px;border-radius:5px;
+  background:rgba(255,255,255,.09);color:#8fa8c6;font-weight:700;
+}
+.side .foot{
+  margin-top:auto;padding:16px 12px 0;border-top:1px solid rgba(150,185,225,.13);
+  font-size:11px;color:#7f97b6;line-height:1.8;
+}
 .side .foot b{color:#39d7aa;font-weight:700}
 
-.main{min-width:0}
-.top{height:66px;background:rgba(255,255,255,.94);border-bottom:1px solid var(--line);
-  display:flex;align-items:center;justify-content:space-between;padding:0 34px;gap:14px}
+/* ============ 顶栏（常驻） ============ */
+.top{
+  height:60px;background:rgba(255,255,255,.97);
+  border-bottom:1px solid var(--line);
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 34px;gap:14px;
+  position:sticky;top:0;z-index:900;backdrop-filter:blur(8px);
+}
 .crumb{font-size:12px;color:var(--muted);font-weight:600}
 .crumb b{color:#41506d}
-.pill{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:20px;
-  background:#f2fbf8;border:1px solid #d9efe8;color:#2f8272;font-size:11px;font-weight:700}
-.pill i{width:6px;height:6px;border-radius:50%;background:#26c196}
+.pill{
+  display:inline-flex;align-items:center;gap:7px;padding:5px 12px;
+  border-radius:20px;background:#f2fbf8;border:1px solid #d9efe8;
+  color:#2f8272;font-size:11.5px;font-weight:700;
+}
+.pill i{width:6px;height:6px;border-radius:50%;background:#26c196;flex:none}
 
-.body{padding:30px 34px 70px;max-width:1400px}
+/* ============ 上下文状态条（常驻） ============ */
+.ctxbar{
+  position:sticky;top:60px;z-index:890;
+  background:#fff;border:1px solid #e2e9f4;border-radius:13px;
+  display:flex;align-items:stretch;
+  box-shadow:0 2px 10px rgba(28,48,88,.045);
+  margin-bottom:20px;
+}
+.ctxbar .ci{
+  display:flex;flex-direction:column;gap:3px;padding:11px 18px;
+  border-right:1px solid var(--line-2);min-width:0;flex:none;
+}
+.ctxbar .ci:last-child{border-right:none}
+.ctxbar .clab{
+  font-size:9.5px;letter-spacing:.1em;color:#96a3b8;font-weight:750;
+  text-transform:uppercase;white-space:nowrap;line-height:1.4;
+}
+.ctxbar .ci b{
+  font-size:12.5px;color:#2b3a55;font-weight:700;line-height:1.5;
+  word-break:break-all;
+}
+.ctxbar .ci b .clab{
+  display:inline;font-size:10px;letter-spacing:0;margin-left:4px;
+  text-transform:none;color:#a8b3c4;
+}
+.ctxbar .ci b.warnv{color:var(--amber)}
+.ctxbar .ci.has b{color:var(--blue)}
+.ctxbar .spacer{flex:1;border-right:1px solid var(--line-2);min-width:20px}
+
+/* ============ 页面 ============ */
 .pane{display:none}
 .pane.on{display:block;animation:fade .2s ease}
 @keyframes fade{from{opacity:.55;transform:translateY(5px)}to{opacity:1;transform:none}}
-h1{font-size:25px;font-weight:800;letter-spacing:-.02em;margin:0 0 6px}
-.sub{color:var(--muted);font-size:13px;margin:0 0 24px}
+h1{font-size:24px;font-weight:800;letter-spacing:-.025em;margin:0 0 6px;color:#1a2740;line-height:1.4}
+.sub{color:var(--muted);font-size:13px;margin:0 0 22px;max-width:760px;line-height:1.7}
 
-.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
-  box-shadow:var(--shadow);padding:20px 22px;margin-bottom:18px}
-.card h2{font-size:14px;font-weight:750;margin:0 0 14px;color:#26344e;
-  display:flex;align-items:center;justify-content:space-between;gap:10px}
-.card h2 small{font-weight:500;color:var(--hint);font-size:11px}
+/* ============ 卡片 ============ */
+.card{
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  margin-bottom:16px;box-shadow:0 1px 3px rgba(28,48,88,.035);
+  /* 关键：内容区左右留白必须用 padding，不能用子元素 margin。
+     子元素带 width:100% 时（按钮、进度条、输入框），margin 会额外撑宽，
+     导致内容溢出卡片右边界——这就是"文字只显示一半"的原因。 */
+  padding:0 20px 18px;
+}
+.card>h2{
+  margin:0 -20px 16px;padding:14px 20px;
+  font-size:13.5px;font-weight:750;color:#22314b;line-height:1.5;
+  background:#fafbfd;border-bottom:1px solid var(--line-2);
+  border-radius:var(--radius) var(--radius) 0 0;
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  flex-wrap:wrap;
+}
+.card>h2 small{font-weight:500;color:var(--hint);font-size:11px}
+.card>:not(h2):last-child{margin-bottom:0}
+.card>h2+*{margin-top:0}
 
-.grid2{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:18px;align-items:start}
-@media(max-width:1000px){.grid2{grid-template-columns:1fr}}
-
-label.f{display:block;margin-bottom:11px}
-label.f span{display:block;font-size:11.5px;color:var(--ink2);font-weight:650;margin-bottom:4px}
-label.f input,label.f select{width:100%;padding:8px 11px;border:1px solid #dbe3ef;
-  border-radius:9px;background:#fbfcfe;color:var(--ink);font-size:13px}
-label.f input:focus,label.f select:focus{outline:none;border-color:#8fb0f0;background:#fff;
-  box-shadow:0 0 0 3px rgba(52,101,224,.1)}
-label.f input[readonly]{background:#f4f6fa;color:var(--muted)}
+/* ============ 栅格 ============ */
+/* 左内容自适应，右栏固定；窄屏（<1180px）自动堆叠，避免左栏被压窄 */
+.panegrid{
+  display:grid;grid-template-columns:minmax(0,1fr) 330px;
+  gap:18px;align-items:start;
+}
+.sticky{position:sticky;top:150px}
+@media(max-width:1180px){
+  .panegrid{grid-template-columns:minmax(0,1fr)}
+  .sticky{position:static}
+}
+@media(max-width:820px){
+  .body{padding:16px 16px 60px}
+  .top{padding:0 16px}
+  .row{grid-template-columns:1fr}
+}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.sec-title{font-size:11px;letter-spacing:.14em;color:#7c8aa3;font-weight:800;
-  margin:18px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
-.sec-title:first-child{margin-top:0}
 
-.btn{padding:9px 17px;border-radius:9px;border:1px solid #d6dfec;background:#fff;
-  color:var(--ink2);font-size:13px;font-weight:650}
-.btn:hover{background:#f7f9fd;border-color:#c3d0e4}
-.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
-.btn.primary:hover{background:var(--blue2)}
-.btn.go{background:var(--green);border-color:var(--green);color:#fff}
-.btn.go:hover{filter:brightness(.94)}
-.btn:disabled{opacity:.45;cursor:not-allowed}
+/* ============ 表单 ============ */
+label.f{display:block;margin-bottom:12px}
+label.f span{
+  display:block;font-size:11.5px;color:var(--ink-2);font-weight:650;
+  margin-bottom:5px;line-height:1.5;
+}
+label.f input,label.f select{
+  width:100%;padding:8px 11px;border:1px solid #dbe3ef;border-radius:9px;
+  background:#fbfcfe;color:var(--ink);font-size:13px;line-height:1.5;
+}
+label.f input:focus,label.f select:focus{
+  outline:none;border-color:#8fb0f0;background:#fff;
+  box-shadow:0 0 0 3px rgba(61,111,224,.1);
+}
+label.f input[readonly]{background:#f4f6fa;color:var(--muted)}
+.sec-title{
+  font-size:11px;letter-spacing:.14em;color:#7c8aa3;font-weight:800;
+  margin:18px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line);
+}
+
+/* ============ 按钮 ============ */
+.btn{
+  padding:9px 16px;border-radius:9px;font-size:12.8px;font-weight:650;
+  border:1px solid #d9e2ef;background:#fff;color:#41506d;
+  transition:.15s;line-height:1.5;
+}
+.btn:hover{background:#f7f9fd;border-color:#c2d0e6}
+.btn.primary{
+  background:linear-gradient(135deg,var(--blue),var(--blue-d));
+  border-color:var(--blue-d);color:#fff;
+  box-shadow:0 2px 8px rgba(61,111,224,.22);
+}
+.btn.primary:hover{box-shadow:0 4px 14px rgba(61,111,224,.3)}
+.btn.go{
+  background:linear-gradient(135deg,var(--green),var(--green-d));
+  border-color:var(--green-d);color:#fff;
+  box-shadow:0 2px 8px rgba(34,168,108,.22);
+}
+.btn:disabled{
+  background:#dfe6ef;border-color:#dfe6ef;color:#a3aec0;
+  box-shadow:none;cursor:not-allowed;
+}
 .btn.sm{padding:5px 11px;font-size:12px}
 
-#map{height:430px;border-radius:12px;border:1px solid var(--line);background:#eef2f8}
-.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin-top:10px}
-.legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;
-  vertical-align:middle}
+/* ============ 地图 ============ */
+#map,#natMap{height:400px;border-radius:10px;border:1px solid var(--line);background:#eef2f8}
+.legend{
+  display:flex;gap:16px;flex-wrap:wrap;align-items:center;
+  font-size:11.5px;color:var(--muted);margin-top:10px;
+}
+.legend i{
+  display:inline-block;width:9px;height:9px;border-radius:50%;
+  margin-right:5px;vertical-align:middle;
+}
 
-.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:12.5px}
-.kv dt{color:var(--muted);white-space:nowrap}
-.kv dd{margin:0;font-weight:650;color:var(--ink2);text-align:right}
+/* ============ 键值表 ============ */
+.kv{display:grid;grid-template-columns:auto 1fr;gap:7px 14px;font-size:12.5px}
+.kv dt{color:#8b97aa;font-size:12px;line-height:1.7}
+.kv dd{margin:0;color:#2b3a55;font-weight:680;text-align:right;line-height:1.7}
 
+/* ============ 请求明细 ============ */
 .steplist{display:flex;flex-direction:column;gap:8px}
-.stepline{border:1px solid var(--line);border-radius:10px;background:#fbfcfe;overflow:hidden}
-.stepline summary{padding:10px 14px;display:flex;align-items:center;gap:11px;
-  cursor:pointer;list-style:none;font-size:13px}
+.stepline{
+  border:1px solid var(--line);border-radius:10px;background:#fbfcfe;
+  overflow:hidden;
+}
+.stepline summary{
+  padding:10px 14px;display:flex;align-items:center;gap:11px;
+  cursor:pointer;list-style:none;font-size:13px;line-height:1.6;
+}
 .stepline summary::-webkit-details-marker{display:none}
-.stepline .ic{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;
-  font-size:11px;font-weight:800;flex:none;background:#eef3fb;color:#4a6ea8}
+.stepline .ic{
+  width:22px;height:22px;border-radius:6px;display:grid;place-items:center;
+  font-size:11px;font-weight:800;flex:none;background:#eef3fb;color:#4a6ea8;
+  line-height:1;
+}
 .stepline .ic.s{background:#e9f7f2;color:#1f8a63}
 .stepline .ic.f{background:#fdf0e8;color:#b96a25}
 .stepline .ic.st{background:#f0eefc;color:#6250b8}
-.stepline .t{flex:1;font-weight:650;color:#2b3a55}
-.stepline .m{font-size:11.5px;color:var(--muted);font-family:Consolas,monospace}
-.stepline pre{margin:0;padding:11px 14px;background:#111b2b;color:#c7d6ea;font-size:11.5px;
-  overflow:auto;max-height:300px;line-height:1.55}
-.warn{background:#fff8ec;border:1px solid #f2dfba;color:#8a5a10;padding:10px 14px;
-  border-radius:9px;font-size:12.5px;margin-bottom:9px}
-.err{background:#fdf0f1;border:1px solid #f0c8cc;color:#a52b35;padding:11px 14px;
-  border-radius:9px;font-size:12.5px;margin-bottom:12px}
+.stepline .t{flex:1;font-weight:650;color:#2b3a55;min-width:0}
+.stepline .m{
+  font-size:11.5px;color:var(--muted);font-family:Consolas,monospace;
+  text-align:right;flex:none;
+}
+.stepline pre{
+  margin:0;padding:11px 14px;background:#0f1826;color:#c7d6ea;
+  font-size:11.5px;overflow:auto;max-height:300px;line-height:1.6;
+}
 
-.confirm{display:flex;align-items:flex-start;gap:10px;background:#eef7f2;border:1px solid #cfe8da;
-  padding:13px 16px;border-radius:10px;font-size:13px;color:#1d6b48;margin:14px 0}
+/* ============ 提示块 ============ */
+.tip{
+  background:#fbfaf5;border:1px solid #eee5d0;border-left:3px solid #d9a94a;
+  border-radius:9px;padding:13px 16px;font-size:12.3px;color:#7a6335;
+  line-height:1.8;margin-bottom:16px;
+}
+.tip b{color:#8a5a10}
+.tip code{background:#f3ede0;padding:1px 5px;border-radius:4px;color:#6d5326}
+.warn{
+  background:#fffaf0;border:1px solid #f3e3c2;border-left:3px solid #e0a53a;
+  border-radius:9px;padding:12px 16px;font-size:12.3px;color:#8a5a10;
+  line-height:1.8;margin-bottom:16px;
+}
+.err{
+  background:#fef3f4;border:1px solid #f3d0d4;border-left:3px solid #d9525f;
+  border-radius:9px;padding:12px 16px;font-size:12.3px;color:#a52b35;
+  line-height:1.8;margin-bottom:16px;
+}
+
+/* ============ 确认框 ============ */
+.confirm{
+  display:flex;align-items:flex-start;gap:10px;
+  background:#eef7f2;border:1px solid #cfe8da;padding:13px 16px;
+  border-radius:10px;font-size:13px;color:#1d6b48;margin:14px 0;
+  line-height:1.7;
+}
 .confirm input{margin-top:3px;width:16px;height:16px;flex:none}
 
-.bar{height:8px;background:#e9eef6;border-radius:6px;overflow:hidden;margin:10px 0 6px}
-.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#3465e0,#12b5ad);
-  transition:width .35s ease}
-#log{background:#101b2b;color:#c3d3e8;border-radius:10px;padding:13px 15px;font-size:12px;
-  font-family:"Cascadia Code",Consolas,monospace;height:330px;overflow:auto;white-space:pre-wrap;
-  line-height:1.6}
-.badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700}
+/* ============ 进度 ============ */
+.bar{height:7px;background:#eef2f8;border-radius:5px;overflow:hidden;margin:10px 0 6px}
+.bar i{
+  display:block;height:100%;width:0;
+  background:linear-gradient(90deg,var(--blue),var(--green));
+  transition:width .3s ease;
+}
+
+/* ============ 日志 ============ */
+#log{
+  background:#0f1826;color:#b9c9dd;border-radius:10px;padding:13px 15px;
+  font-size:11.8px;font-family:"Cascadia Code",Consolas,monospace;
+  height:340px;overflow:auto;white-space:pre-wrap;line-height:1.65;
+  border:1px solid #1c2b3f;
+}
+
+/* ============ 徽章 ============ */
+.badge{
+  display:inline-block;padding:2px 8px;border-radius:6px;
+  font-size:11px;font-weight:700;line-height:1.6;
+}
 .badge.ok{background:#e8f7ef;color:#1f8a63}
 .badge.bad{background:#fdecee;color:#b8323c}
 .badge.idle{background:#eef2f8;color:#6c7c95}
-table.req{width:100%;border-collapse:collapse;font-size:12.5px}
-table.req th{text-align:left;font-weight:700;color:var(--muted);font-size:11px;
-  padding:0 0 7px;border-bottom:1px solid var(--line);letter-spacing:.04em}
-table.req td{padding:8px 0;border-bottom:1px solid #f0f3f8;vertical-align:top}
+
+/* ============ 表格 ============ */
+table.req{
+  width:100%;border-collapse:collapse;font-size:12.5px;
+  /* 不加 table-layout:fixed 时，长内容会把表格撑出容器宽度 */
+  table-layout:fixed;
+}
+table.req th,table.req td{word-break:break-word;overflow-wrap:anywhere}
+/* 历史记录表：时间/里程/任务/操作 四列定宽 */
+#runTable th:nth-child(1),#runTable td:nth-child(1){width:30%}
+#runTable th:nth-child(2),#runTable td:nth-child(2){width:18%}
+#runTable th:nth-child(3),#runTable td:nth-child(3){width:22%}
+#runTable th:nth-child(4),#runTable td:nth-child(4){width:30%;text-align:right}
+table.req th{
+  text-align:left;font-weight:700;color:var(--hint);font-size:10.5px;
+  padding:0 0 8px;border-bottom:1px solid var(--line);
+  letter-spacing:.06em;text-transform:uppercase;
+}
+table.req td{padding:9px 0;border-bottom:1px solid var(--line-2);vertical-align:top;line-height:1.65}
 table.req tr:last-child td{border-bottom:none}
-table.req .lab{font-weight:650;color:var(--ink2)}
+table.req tr:hover td{background:#fafbfd}
+table.req .lab{font-weight:650;color:var(--ink-2)}
 table.req .note{display:block;font-size:10.5px;color:var(--hint);margin-top:2px}
 table.req .act{font-family:Consolas,monospace;font-weight:650}
-.hide{display:none!important}
-.okbox{background:linear-gradient(135deg,#f0fbf5,#f7fdfa);border:1px solid #cfe8da;
-  border-radius:12px;padding:18px 20px}
-.oktitle{font-size:16px;font-weight:800;color:#1a7a52;margin-bottom:14px;
-  display:flex;align-items:center;gap:8px}
-.oktitle:before{content:"";width:20px;height:20px;border-radius:50%;background:#2fae7c;
-  display:inline-block;position:relative}
+
+/* ============ 空状态 ============ */
+.empty{
+  color:#a3aec0;font-size:12.5px;padding:26px 0;text-align:center;
+  background:#fafbfd;border-radius:10px;border:1px dashed #e3eaf4;
+}
+
+/* ============ 成功面板 ============ */
+.okbox{
+  background:linear-gradient(135deg,#f2fbf6,#f9fdfb);
+  border:1px solid #d3eade;border-radius:12px;padding:18px 20px;
+}
+.oktitle{
+  font-size:15.5px;font-weight:800;color:#1a7a52;margin-bottom:14px;
+  display:flex;align-items:center;gap:8px;line-height:1.5;
+}
+.oktitle:before{
+  content:"";width:20px;height:20px;border-radius:50%;background:#2fae7c;
+  display:inline-block;flex:none;
+}
 .okgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px}
 .okgrid div{background:#fff;border:1px solid #e2f0e9;border-radius:9px;padding:10px 12px}
-.okgrid span{display:block;font-size:11px;color:#7c9a8c;margin-bottom:3px}
-.okgrid b{font-size:15px;color:#1a6b4a;font-family:Consolas,monospace}
-.oknote{margin-top:12px;font-size:11.5px;color:#5c8272;line-height:1.7}
-.tip{background:#fbf9f4;border:1px solid #ece2cc;border-radius:11px;padding:14px 16px;
-  font-size:12.5px;color:#7a6335;line-height:1.75;margin-bottom:16px}
-.tip b{color:#8a5a10}
-.tip code{background:#f3ede0;padding:1px 5px;border-radius:4px;color:#6d5326}
+.okgrid span{display:block;font-size:11px;color:#7c9a8c;margin-bottom:3px;line-height:1.5}
+.okgrid b{font-size:15px;color:#1a6b4a;font-family:Consolas,monospace;line-height:1.5}
+.oknote{margin-top:12px;font-size:11.5px;color:#5c8272;line-height:1.75}
+
+/* ============ 用户卡片 ============ */
 .usergrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:11px}
-.usercard{border:1.5px solid var(--line);border-radius:12px;padding:13px 15px;
-  background:#fbfcfe;cursor:pointer;transition:.15s;position:relative}
+.usercard{
+  border:1.5px solid #e6ecf5;border-radius:11px;padding:13px 15px;
+  background:#fafbfd;cursor:pointer;transition:.15s;position:relative;
+}
 .usercard:hover{border-color:#b9cbec;background:#f6f9ff}
-.usercard.on{border-color:var(--blue);background:#eef4ff;
-  box-shadow:0 0 0 3px rgba(52,101,224,.09)}
-.usercard .un{font-weight:750;font-size:14px;color:#25344d;margin-bottom:4px;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.usercard.on{
+  border-color:#5b86e0;
+  background:linear-gradient(135deg,#f0f5ff,#f7faff);
+  box-shadow:0 0 0 3px rgba(61,111,224,.08);
+}
+.usercard .un{
+  font-weight:750;font-size:14px;color:#25344d;margin-bottom:4px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.5;
+}
 .usercard .ud{font-size:11px;color:var(--hint);line-height:1.6}
 .usercard .ud b{color:#5d7ba5;font-weight:650}
-.usercard .del{position:absolute;right:9px;top:9px;font-size:15px;color:#c2cbd9;
-  cursor:pointer;line-height:1;padding:2px 4px;border-radius:5px}
+.usercard .del{
+  position:absolute;right:9px;top:9px;font-size:15px;color:#c2cbd9;
+  cursor:pointer;line-height:1;padding:2px 5px;border-radius:5px;
+}
 .usercard .del:hover{background:#fdecee;color:#c0394a}
-.usercard.on .un:after{content:"当前";font-size:9.5px;background:var(--blue);
-  color:#fff;padding:1px 6px;border-radius:5px;margin-left:7px;vertical-align:middle}
-#userFloat{position:fixed;right:22px;top:82px;background:#fff;border:1px solid #dbe6f5;
-  border-radius:12px;padding:10px 14px;box-shadow:0 6px 22px rgba(28,48,88,.09);
-  font-size:12px;z-index:500;display:flex;align-items:center;gap:9px}
-#userFloat .dot{width:8px;height:8px;border-radius:50%;background:#2fae7c;flex:none}
-#userFloat b{color:#25344d;font-weight:750}
-#userFloat small{color:var(--hint);font-size:10.5px}
-.toast{position:fixed;right:24px;bottom:24px;background:#1b2940;color:#fff;padding:11px 17px;
-  border-radius:10px;font-size:13px;box-shadow:0 10px 30px rgba(10,20,40,.28);z-index:9999}
+.usercard.on .un:after{
+  content:"当前";font-size:9.5px;background:var(--blue);color:#fff;
+  padding:1px 6px;border-radius:5px;margin-left:7px;vertical-align:middle;
+}
+
+/* ============ 其他 ============ */
+.hide{display:none!important}
+.toast{
+  position:fixed;right:24px;bottom:24px;background:#1b2940;color:#fff;
+  padding:11px 17px;border-radius:10px;font-size:13px;
+  box-shadow:0 10px 30px rgba(10,20,40,.28);z-index:9999;
+  max-width:420px;line-height:1.6;
+}
+
 </style>
 </head>
 <body>
@@ -184,59 +406,80 @@ table.req .act{font-family:Consolas,monospace;font-weight:650}
   <aside class="side">
     <div class="brand"><div class="mk">◎</div>
       <div><b>云运动工作台</b><span>LOCAL CONSOLE</span></div></div>
-    <div class="step on" data-go="1"><span class="n">1</span>配置信息</div>
-    <div class="step" data-go="5"><span class="n">2</span>历史记录</div>
-    <div class="step" data-go="2"><span class="n">3</span>选择路线</div>
-    <div class="step" data-go="3"><span class="n">4</span>上传预检</div>
-    <div class="step" data-go="4"><span class="n">5</span>开始上传</div>
+
+    <div class="navgroup">
+      <div class="gtitle">准备</div>
+      <div class="step on" data-go="1"><span class="n">1</span>用户与配置</div>
+      <div class="step" data-go="5"><span class="n">2</span>历史记录</div>
+    </div>
+    <div class="navgroup">
+      <div class="gtitle">选择轨迹</div>
+      <div class="step" data-go="2"><span class="n">3</span>任务表</div>
+      <div class="step" data-go="6"><span class="n">4</span>轨迹自然化<span class="tag">可选</span></div>
+    </div>
+    <div class="navgroup">
+      <div class="gtitle">提交</div>
+      <div class="step" data-go="3"><span class="n">5</span>上传预检</div>
+      <div class="step" data-go="4"><span class="n">6</span>开始上传</div>
+    </div>
+
     <div class="foot">
-      <b>已验证范围</b><br>
-      <b>合肥工业大学 fch 打表模式</b>经过完整实测。<br>
-      其他校区可选但未验证；合成轨迹、人脸核验请用 <code>python main.py</code>。<br><br>
-      全部请求经本机代理<br><b>127.0.0.1</b> · 仅本机可访问
+      <b>已验证</b> 合肥工业大学 fch 打表模式<br>
+      其他校区可选但未验证<br><br>
+      <b>127.0.0.1</b> · 仅本机可访问
     </div>
   </aside>
 
-  <div id="userFloat">
-    <span class="dot"></span>
-    <div><small>当前用户</small><br><b id="floatUser">user</b></div>
-  </div>
-
   <div class="main">
     <div class="top">
-      <div class="crumb">工作台 / <b id="crumb">配置信息</b></div>
-      <div class="pill"><i></i>本地运行</div>
+      <div class="crumb">工作台 / <b id="crumb">用户与配置</b></div>
+      <div class="pill"><i></i><span id="floatUser">user</span></div>
     </div>
 
     <div class="body">
-      <!-- ============ 1 配置 ============ -->
+      <!-- 全局上下文栏：任何页面都能看到"当前是谁 / 用哪张表" -->
+      <div class="ctxbar" id="ctxbar">
+        <div class="ci"><span class="clab">用户</span><b id="ctxUser">user</b></div>
+        <div class="sep"></div>
+        <div class="ci"><span class="clab">任务表</span><b id="ctxTask">未选择</b></div>
+        <div class="sep"></div>
+        <div class="ci" id="ctxNatWrap"><span class="clab">自然化</span><b id="ctxNat">未使用</b></div>
+        <div class="spacer"></div>
+        <div class="ci" id="ctxCapWrap"><span class="clab">里程上限</span><b class="warnv" id="ctxCap">—</b></div>
+        <div class="sep"></div>
+        <div class="ci"><span class="clab">预检</span>
+          <b id="ctxPre"><span class="badge idle">未执行</span></b></div>
+      </div>
+
+      <!-- ================= 1 用户与配置 ================= -->
       <section class="pane on" id="pane1">
-        <h1>配置信息</h1>
-        <p class="sub">每个用户一份独立配置文件（<code>configs/&lt;名字&gt;.ini</code>），互不影响。</p>
+        <h1>用户与配置</h1>
+        <p class="sub">每个用户一份独立配置（<code>configs/&lt;名字&gt;.ini</code>），互不影响。</p>
 
         <div class="card">
-          <h2>用户配置 <small>点击卡片切换当前用户</small></h2>
+          <h2>用户 <small>点击卡片切换当前用户</small></h2>
           <div class="usergrid" id="userGrid"></div>
-          <div style="display:flex;gap:9px;margin-top:14px;align-items:center">
+          <div style="display:flex;gap:9px;margin-top:14px;align-items:center;flex-wrap:wrap">
             <input id="newUserName" placeholder="新用户名称（中英文/数字/_-）"
-                   style="flex:1;max-width:260px;padding:8px 11px;border:1px solid #dbe3ef;
+                   style="flex:1;max-width:240px;padding:8px 11px;border:1px solid #dbe3ef;
                           border-radius:9px;font-size:13px">
             <button class="btn primary" onclick="createUser()">添加用户</button>
             <span id="userMsg" style="font-size:12.5px;color:var(--muted)"></span>
           </div>
         </div>
 
-        <div class="warn" style="background:#eef5ff;border-color:#dce9ff;color:#2c4a7c">
+        <div class="tip">
           <b>只需填写 [User] 段</b>：<code>token</code>、<code>device_id</code>、
           <code>device_name</code>、<code>sys_edition</code>。<br>
-          其余字段（<code>[Yun]</code> 的密钥与服务器、<code>[Run]</code> 的跑步参数、
-          <code>[Login]</code>）<b>请保持原样不要改动</b>——改错会直接导致上传失败。
+          其余字段（<code>[Yun]</code> 密钥与服务器、<code>[Run]</code> 跑步参数、
+          <code>[Login]</code>）<b>保持原样</b>——改错会直接导致上传失败。
         </div>
+
         <div class="card">
           <h2><span id="cfgUserLabel">当前用户：user</span>
             <small>敏感项留空或保持掩码即不修改</small></h2>
           <div id="cfgForm"></div>
-          <div style="margin-top:16px;display:flex;gap:10px;align-items:center">
+          <div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <button class="btn primary" onclick="saveCfg()">保存配置</button>
             <button class="btn" onclick="loadCfg()">重新读取</button>
             <span id="cfgMsg" style="font-size:12.5px;color:var(--muted)"></span>
@@ -244,17 +487,51 @@ table.req .act{font-family:Consolas,monospace;font-weight:650}
         </div>
       </section>
 
-      <!-- ============ 2 选路 ============ -->
-      <section class="pane" id="pane2">
-        <h1>选择路线</h1>
-        <p class="sub">打表模式：直接回放一张已有的任务表。地图显示轨迹与打卡点。</p>
+      <!-- ================= 2 历史记录 ================= -->
+      <section class="pane" id="pane5">
+        <h1>历史记录</h1>
+        <p class="sub">从服务器拉取以前的跑步记录，保存为本地任务表。</p>
         <div class="tip">
-          <b>建议优先选 <code>tasks_else</code> 里自己拉取的记录。</b>
-          仓库自带的 <code>tasks_fch</code> 等目录是示例数据；
-          自己拉取的表与你的学校任务、常跑路线更匹配。
-          <br>已验证：合肥工业大学 fch 打表模式。其他校区可选但未验证。
+          <b>建议先拉取一次自己的数据。</b>
+          历史记录里有你真实的轨迹和踩点位置，比仓库示例更贴合实际。
+          拉取后可在「任务表」里选中回放。任务表所有用户共用。
         </div>
-        <div class="grid2">
+
+        <div class="panegrid">
+          <div class="card">
+            <h2>跑步记录 <small id="histInfo"></small></h2>
+            <div style="display:flex;gap:9px;align-items:end;margin-bottom:14px">
+              <label class="f" style="flex:1;margin:0">
+                <span>学期</span>
+                <select id="histTerm" onchange="loadRuns()"></select>
+              </label>
+              <button class="btn" onclick="loadTerms()">刷新</button>
+            </div>
+            <div id="histErr"></div>
+            <table class="req" id="runTable">
+              <thead><tr><th>结束时间</th><th>里程</th><th>任务</th><th></th></tr></thead>
+              <tbody><tr><td colspan="4" style="color:var(--hint)">点击「刷新」加载学期列表</td></tr></tbody>
+            </table>
+          </div>
+          <div class="card sticky">
+            <h2>保存结果</h2>
+            <div id="histResult" class="empty">选择左侧一条记录，点击「拉取并保存」。</div>
+            <div class="sec-title" style="margin-top:18px">说明</div>
+            <div style="font-size:12px;color:var(--muted);line-height:1.75">
+              保存位置：<code>tasks_else/tasklist_N.json</code><br>
+              编号自动续接，不覆盖已有文件。<br>
+              保存后可在「任务表」里选中回放。
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 3 任务表 ================= -->
+      <section class="pane" id="pane2">
+        <h1>任务表</h1>
+        <p class="sub">打表模式：直接回放一张已有的任务表。地图显示轨迹与打卡点。</p>
+
+        <div class="panegrid">
           <div class="card">
             <h2>轨迹预览 <small id="trackInfo"></small></h2>
             <div id="map"></div>
@@ -264,40 +541,98 @@ table.req .act{font-family:Consolas,monospace;font-weight:650}
               <span><i style="background:#c98213"></i>未踩点</span>
             </div>
             <div style="font-size:11.5px;color:var(--hint);margin-top:6px">
-              底图为高德瓦片（GCJ-02）。任务表坐标本身就是 GCJ-02，
-              两者同一坐标系，<b>不做任何转换</b>即可对齐。
+              底图为高德瓦片（GCJ-02），与任务表坐标同坐标系，无需转换。
             </div>
           </div>
-          <div class="card">
-            <h2>任务表</h2>
-            <label class="f"><span>校区目录</span>
+          <div class="card sticky">
+            <h2>选择</h2>
+            <label class="f"><span>目录</span>
               <select id="campus" onchange="fillTasks()"></select></label>
             <label class="f"><span>任务表</span>
               <select id="task" onchange="loadTrack()"></select></label>
-            <div style="margin-top:8px;display:flex;flex-direction:column;gap:9px">
+            <div style="display:flex;flex-direction:column;gap:9px;margin-top:6px">
               <button class="btn" onclick="loadTrack()">刷新预览</button>
+              <button class="btn" onclick="openNaturalize()">轨迹自然化（可选）</button>
               <button class="btn primary" onclick="go(3);doPreview()">下一步：预检</button>
             </div>
-            <div class="sec-title" style="margin-top:20px">本表概况</div>
+            <div class="sec-title" style="margin-top:18px">本表概况</div>
             <dl class="kv" id="trackKv"><dt>—</dt><dd>请选择任务表</dd></dl>
           </div>
         </div>
       </section>
 
-      <!-- ============ 3 预检 ============ -->
+      <!-- ================= 4 轨迹自然化 ================= -->
+      <section class="pane" id="pane6">
+        <h1>轨迹自然化</h1>
+        <p class="sub">把选中的任务表形变成一条形状不同的新轨迹，生成新任务表后再预检。</p>
+
+        <div class="warn">
+          <b>算法能力有限，不能保证规避风控。</b>
+          本步骤只改变轨迹的几何形状与节奏，无法保证服务端不复核、不判定异常。
+          同一来源反复使用仍可能保留可识别相似性；是否使用、用几次，请自行判断。
+        </div>
+
+        <div class="panegrid">
+          <div class="card">
+            <h2>轨迹对比 <small id="natInfo"></small></h2>
+            <div id="natMap"></div>
+            <div class="legend">
+              <label style="cursor:pointer"><input type="checkbox" id="natShowSrc"
+                checked onchange="drawNat(NAT_DATA)"> <i style="background:#9aa6b8"></i>原轨迹</label>
+              <label style="cursor:pointer"><input type="checkbox" id="natShowNew"
+                checked onchange="drawNat(NAT_DATA)"> <i style="background:#3465e0"></i>自然化后</label>
+              <label style="cursor:pointer;margin-left:auto"><input type="checkbox"
+                id="natShowDiff" onchange="drawNat(NAT_DATA)"> 偏移连线</label>
+            </div>
+          </div>
+          <div>
+            <div class="card">
+              <h2>参数</h2>
+              <label class="f"><span>来源任务表</span>
+                <input id="natSource" readonly style="background:#f4f6fa;color:var(--muted)"></label>
+              <label class="f"><span>强度</span>
+                <select id="natStrength">
+                  <option value="light">轻度 · 偏离约 1.5m（最保守）</option>
+                  <option value="medium" selected>中度 · 偏离约 3.5m（推荐）</option>
+                  <option value="strong">较强 · 偏离约 6m（仍在场地内）</option>
+                </select></label>
+              <label class="f"><span>目标里程（km，留空沿用原表）</span>
+                <input id="natKm" placeholder="例如 2.0"></label>
+              <label class="f"><span>随机种子（留空每次不同）</span>
+                <input id="natSeed" placeholder="留空 = 随机"></label>
+              <div style="display:flex;flex-direction:column;gap:9px;margin-top:6px">
+                <button class="btn primary" onclick="doNaturalize()">生成新轨迹</button>
+                <button class="btn" onclick="rerollNaturalize()">换一个</button>
+              </div>
+            </div>
+            <div class="card" id="natResultCard" style="display:none">
+              <h2>生成结果 <span class="badge ok">学校校验通过</span></h2>
+              <dl class="kv" id="natMetrics"></dl>
+              <div style="display:flex;gap:9px;margin-top:14px">
+                <input id="natSaveName" placeholder="保存名称"
+                       style="flex:1;padding:8px 11px;border:1px solid #dbe3ef;border-radius:9px;font-size:13px">
+                <button class="btn go" onclick="saveNaturalized()">保存并使用</button>
+              </div>
+              <div id="natSaveMsg" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
+              <div class="tip" style="margin-top:12px;margin-bottom:0">
+                保存的表是<b>临时文件</b>，上传成功后自动删除；失败则保留便于排查。
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 5 上传预检 ================= -->
       <section class="pane" id="pane3">
         <h1>上传预检</h1>
-        <p class="sub">用本地假传输把整条链路完整跑一遍，逐条列出<b>将要发给服务器的每个请求</b>。此步骤不联网。</p>
-        <div class="warn" style="background:#eef5ff;border-color:#dce9ff;color:#2c4a7c">
-          使用配置：<b id="previewUser">user</b>
-          <span style="color:#6b83a8">（在「配置信息」页切换用户）</span>
-        </div>
+        <p class="sub">用本地假传输把整条链路跑一遍，逐条列出将要发给服务器的请求。<b>此步骤不联网。</b></p>
         <div id="previewErr"></div>
-        <div class="grid2">
+
+        <div class="panegrid">
           <div class="card">
             <h2>请求明细 <small>点开任意一条查看完整请求体</small></h2>
             <div class="steplist" id="stepList">
-              <div style="color:var(--hint);font-size:13px">尚未预检</div>
+              <div class="empty">尚未预检</div>
             </div>
           </div>
           <div>
@@ -315,67 +650,24 @@ table.req .act{font-family:Consolas,monospace;font-weight:650}
               <div id="sumWarn"></div>
             </div>
             <div class="card">
-              <button class="btn primary" style="width:100%"
-                      onclick="go(4)">下一步：开始上传</button>
+              <button class="btn primary" style="width:100%" onclick="go(4)">
+                下一步：开始上传</button>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- ============ 5 历史记录 ============ -->
-      <section class="pane" id="pane5">
-        <h1>历史记录</h1>
-        <p class="sub">从服务器拉取以前的跑步记录，保存为本地任务表文件。</p>
-        <div class="tip">
-          <b>建议先拉取一次自己的数据。</b>
-          历史记录里有你真实的轨迹和踩点位置，比仓库自带的示例表更贴合你的学校与常跑路线；
-          拉取后可在「选择路线」里直接选中回放。
-        </div>
-        <div class="grid2">
-          <div class="card">
-            <h2>跑步记录 <small id="histInfo"></small></h2>
-            <div style="display:flex;gap:9px;align-items:end;margin-bottom:14px">
-              <label class="f" style="flex:1;margin:0">
-                <span>学期</span>
-                <select id="histTerm" onchange="loadRuns()"></select>
-              </label>
-              <button class="btn" onclick="loadTerms()">刷新</button>
-            </div>
-            <div id="histErr"></div>
-            <table class="req" id="runTable">
-              <thead><tr><th>结束时间</th><th>里程</th><th>任务</th><th></th></tr></thead>
-              <tbody><tr><td colspan="4" style="color:var(--hint)">点击「刷新」加载学期列表</td></tr></tbody>
-            </table>
-          </div>
-          <div class="card">
-            <h2>保存到本地</h2>
-            <div id="histResult" style="color:var(--hint);font-size:12.5px">
-              选择左侧一条记录，点击「拉取并保存」。
-            </div>
-            <div class="sec-title" style="margin-top:18px">说明</div>
-            <div style="font-size:12px;color:var(--muted);line-height:1.75">
-              保存位置：<code>tasks_else/tasklist_N.json</code><br>
-              编号自动续接，不会覆盖已有文件。<br>
-              保存后可在「选择路线」里选中该表直接回放。
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- ============ 4 上传 ============ -->
+      <!-- ================= 6 开始上传 ================= -->
       <section class="pane" id="pane4">
         <h1>开始上传</h1>
         <p class="sub">确认无误后开始。上传过程中请勿关闭页面，结果实时回传。</p>
 
         <div class="card" id="startCard">
           <h2>上传确认</h2>
-          <div style="font-size:13px;margin-bottom:10px;color:#41506d">
-            将以 <b id="uploadUser">user</b> 的身份上传
-          </div>
           <div id="preflightBox" style="font-size:13px;color:var(--muted)">
             尚未完成预检。请先回到「上传预检」页执行一次。
           </div>
-          <div class="confirm" style="margin-top:14px">
+          <div class="confirm">
             <input type="checkbox" id="ack" onchange="syncGo()">
             <label for="ack">我已核对预检明细，确认无误，现在开始向服务器上传。</label>
           </div>
@@ -402,19 +694,56 @@ table.req .act{font-family:Consolas,monospace;font-weight:650}
     </div>
   </div>
 </div>
-
 <script>
 let MAP=null, TRACK=null, CARDS=null, PREVIEWED=null;
 const $=id=>document.getElementById(id);
 
+const PAGE_NAMES={1:'用户与配置',2:'任务表',3:'上传预检',4:'开始上传',5:'历史记录',6:'轨迹自然化'};
 function go(n){
   document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));
   $('pane'+n).classList.add('on');
-  document.querySelectorAll('.step').forEach(s=>
-    s.classList.toggle('on', s.dataset.go===String(n)));
-  $('crumb').textContent = {1:'配置信息',2:'选择路线',3:'上传预检',4:'开始上传',5:'历史记录'}[n];
+  document.querySelectorAll('.step').forEach(el=>
+    el.classList.toggle('on', +el.dataset.go===n));
+  $('crumb').textContent = PAGE_NAMES[n]||'';
   if(n===2 && MAP) setTimeout(()=>MAP.invalidateSize(),60);
   if(n===5 && !HIST_TERMS.length) loadTerms();
+  if(n===6) setTimeout(()=>{ if(NAT_MAP) NAT_MAP.invalidateSize(); },80);
+  updateCtx();
+}
+function updateCtx(){
+  // 任何状态变化都调用这里，顶栏始终反映"现在到底要发什么"
+  const cu=$('ctxUser'); if(cu) cu.textContent=CUR_USER||'—';
+
+  const c=$('campus')?$('campus').value:'', t=$('task')?$('task').value:'';
+  const ct=$('ctxTask');
+  if(ct) ct.textContent = t ? (c+' / '+t) : '未选择';
+
+  const cap=window.__CAP__;
+  if($('ctxCap')) $('ctxCap').textContent = cap? cap.toFixed(2)+' km' : '不限制';
+
+  const cn=$('ctxNat'), nw=$('ctxNatWrap');
+  if(cn){
+    if(NAT_DATA){
+      const m=NAT_DATA.metrics;
+      cn.innerHTML = `${m.new_km} km <span class="clab">偏离 ${m.dev_median}m</span>`;
+      nw.classList.add('has');
+    }else{
+      cn.textContent='未使用';
+      nw.classList.remove('has');
+    }
+  }
+
+  const cp=$('ctxPre');
+  if(cp){
+    if(PREVIEWED){
+      const s=PREVIEWED.summary||{};
+      const ok = s.spm_ok !== false;
+      cp.innerHTML = `<span class="badge ${ok?'ok':'bad'}">${ok?'通过':'有问题'}</span>
+        <span class="clab">${s.km} km · ${s.cadence} spm</span>`;
+    }else{
+      cp.innerHTML='<span class="badge idle">未执行</span>';
+    }
+  }
 }
 document.querySelectorAll('.step').forEach(s=>s.onclick=()=>go(+s.dataset.go));
 
@@ -459,16 +788,14 @@ function renderUsers(){
 function updateUserLabels(){
   $('floatUser').textContent=CUR_USER;
   $('cfgUserLabel').textContent='当前用户：'+CUR_USER;
-  const pu=$('previewUser'), uu=$('uploadUser');
-  if(pu) pu.textContent=CUR_USER;
-  if(uu) uu.textContent=CUR_USER;
+  updateCtx();
 }
 function switchUser(u){
   if(u===CUR_USER) return;
   CUR_USER=u;
   renderUsers(); updateUserLabels();
   loadCfg();
-  PREVIEWED=null; syncGo(); updatePreflight();
+  PREVIEWED=null; syncGo(); updatePreflight(); updateCtx();
   HIST_TERMS=[]; $('histTerm').innerHTML='';
 }
 async function createUser(){
@@ -557,6 +884,7 @@ async function loadTrack(){
   const marked=(j.cards||[]).filter(c=>c.marked).length;
   const cap=window.__CAP__;
   const capRow = cap ? `<dt>本地里程上限</dt><dd style="color:#c98213">${cap.toFixed(2)} km（到点自动结束）</dd>` : '';
+  updateCtx();
   $('trackKv').innerHTML=
     `<dt>轨迹点</dt><dd>${j.track.length}</dd>
      <dt>表内里程</dt><dd>${j.km.toFixed(3)} km</dd>
@@ -593,7 +921,7 @@ async function doPreview(){
   if(j.error){
     $('previewErr').innerHTML=`<div class="err">预检失败：${j.error}</div>`;
     $('stepList').innerHTML=renderSteps(j.steps||[]);
-    PREVIEWED=null; updatePreflight(); syncGo(); return;
+    PREVIEWED=null; updatePreflight(); syncGo(); updateCtx(); return;
   }
   PREVIEWED=j;
   $('stepList').innerHTML=renderSteps(j.steps);
@@ -615,6 +943,7 @@ async function doPreview(){
     || '<div style="color:var(--green);font-size:12.5px">未发现明显问题</div>';
   updatePreflight();
   syncGo();
+  updateCtx();
 }
 function renderReq(reqs){
   const tb=$('reqTable').querySelector('tbody');
@@ -665,6 +994,136 @@ function updatePreflight(){
     </dl>
     ${warn? `<div class="warn" style="margin-top:12px">预检有 ${warn} 条提示，建议先回看「上传预检」页。</div>`
            : '<div style="margin-top:10px;color:var(--green);font-size:12px">预检通过，未发现明显问题</div>'}`;
+}
+
+/* ---------------- 轨迹自然化 ---------------- */
+let NAT_MAP=null, NAT_DATA=null, NAT_BASE=null;
+async function openNaturalize(){
+  const campus=$('campus').value, task=$('task').value;
+  if(!task){ toast('请先在「选择路线」里选一张任务表'); return; }
+  NAT_BASE={campus, task};
+  $('natSource').value=`${campus} / ${task}`;
+  $('natResultCard').style.display='none';
+  $('natSaveMsg').textContent='';
+  $('natInfo').textContent='点击「生成新轨迹」';
+  NAT_DATA=null;
+  go(6);
+  // 先把原轨迹画出来作为参照，用户能看到"当前选的是哪条"。
+  // 注意：go(6) 只是切换 CSS 显示，容器尺寸要等下一帧才确定，
+  // 所以地图初始化放到 requestAnimationFrame 之后，否则 Leaflet 会按 0×0 渲染。
+  let track=null;
+  try{
+    const t=await (await fetch(`/api/track?campus=${campus}&task=${task}`)).json();
+    if(!t.error) track=t;
+  }catch(e){}
+  requestAnimationFrame(()=>{
+    setTimeout(()=>{
+      ensureNatMap();
+      if(track){
+        drawNat({source_track:track.track, new_track:null});
+        $('natInfo').textContent=`原轨迹 ${track.track.length} 点 · ${track.km} km`;
+      }
+      NAT_MAP.invalidateSize();
+    }, 30);
+  });
+}
+async function doNaturalize(seedOverride){
+  if(!NAT_BASE){ toast('请先选择任务表'); return; }
+  const st=$('natStrength').value;
+  const km=$('natKm').value.trim();
+  const seed= seedOverride!==undefined ? seedOverride : $('natSeed').value.trim();
+  $('natInfo').textContent='生成中…';
+  const qs=new URLSearchParams({campus:NAT_BASE.campus, task:NAT_BASE.task,
+                                strength:st});
+  if(km) qs.set('km',km);
+  if(seed) qs.set('seed',seed);
+  const j=await (await fetch('/api/naturalize?'+qs)).json();
+  if(j.error){ $('natInfo').textContent='失败'; toast(j.error); return; }
+  NAT_DATA=j;
+  $('natInfo').textContent=`${j.metrics.points} 点 · ${j.metrics.new_km} km`;
+  ensureNatMap();
+  NAT_MAP.invalidateSize();
+  drawNat(j);
+  const m=j.metrics;
+  $('natMetrics').innerHTML=`
+    <dt>原里程</dt><dd>${m.src_km} km</dd>
+    <dt>新里程</dt><dd>${m.new_km} km</dd>
+    <dt>轨迹点</dt><dd>${m.points}</dd>
+    <dt>弦长</dt><dd>${m.chord_m} m</dd>
+    <dt>偏离中位</dt><dd>${m.dev_median} m</dd>
+    <dt>偏离 p90</dt><dd>${m.dev_p90} m</dd>
+    <dt>偏离最大</dt><dd>${m.dev_max} m</dd>
+    <dt>平均步频</dt><dd>${m.cadence} spm</dd>
+    <dt>配速</dt><dd>${m.pace} min/km</dd>
+    <dt>种子</dt><dd>${j.seed}</dd>
+    <dt>学校校验</dt><dd><span class="badge ok">通过</span></dd>`;
+  $('natResultCard').style.display='';
+  $('natSaveName').value=`nat_${NAT_BASE.task.replace('.json','')}_${j.seed}`;
+  updateCtx();
+}
+function rerollNaturalize(){ doNaturalize(String(Math.floor(Math.random()*2e9))); }
+function ensureNatMap(){
+  if(!NAT_MAP){
+    NAT_MAP=L.map('natMap',{zoomControl:true}).setView([31.77,117.20],15);
+    L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
+      {subdomains:['1','2','3','4'],maxNativeZoom:18,maxZoom:20,attribution:'© 高德'}).addTo(NAT_MAP);
+  }
+  return NAT_MAP;
+}
+function drawNat(j){
+  const m=ensureNatMap();
+  m.eachLayer(l=>{ if(!(l instanceof L.TileLayer)) m.removeLayer(l); });
+  if(!j || !j.source_track || !j.source_track.length){ return; }
+  const showSrc=$('natShowSrc').checked, showNew=$('natShowNew').checked;
+  const showDiff=$('natShowDiff').checked;
+  const layers=[];
+  let src=null, nw=null;
+  if(showSrc){
+    src=L.polyline(j.source_track.map(p=>[p[1],p[0]]),
+      {color:'#9aa6b8',weight:3,dashArray:'6,5',opacity:.8}).addTo(m);
+    layers.push(src);
+  }
+  if(showNew && j.new_track && j.new_track.length){
+    nw=L.polyline(j.new_track.map(p=>[p[1],p[0]]),
+      {color:'#3465e0',weight:3.5,opacity:.92}).addTo(m);
+    layers.push(nw);
+  }
+  // 偏移连线：每隔若干点画一条，直观看出两个轨迹错开多少
+  if(showDiff && j.source_track && j.new_track && j.new_track.length){
+    const step=Math.max(1, Math.floor(j.new_track.length/60));
+    for(let i=0;i<j.new_track.length;i+=step){
+      const p=j.new_track[i];
+      // 找最近的源轨迹点
+      let best=null, bd=Infinity;
+      for(const q of j.source_track){
+        const d=(p[0]-q[0])**2+(p[1]-q[1])**2;
+        if(d<bd){bd=d; best=q;}
+      }
+      if(!best) continue;
+      L.polyline([[best[1],best[0]],[p[1],p[0]]],
+        {color:'#e07a3f',weight:1,opacity:.55}).addTo(m);
+    }
+  }
+  const box = (src&&nw) ? src.getBounds().extend(nw.getBounds())
+            : (src? src.getBounds() : (nw? nw.getBounds() : null));
+  if(box) m.fitBounds(box,{padding:[24,24]});
+}
+async function saveNaturalized(){
+  if(!NAT_DATA){ return; }
+  const name=$('natSaveName').value.trim();
+  const r=await fetch('/api/naturalize/save',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({task:NAT_DATA.task, name})});
+  const j=await r.json();
+  if(j.error){ $('natSaveMsg').textContent=j.error; return; }
+  $('natSaveMsg').innerHTML=`已保存到 <b>${j.saved}</b>（临时文件，上传成功后自动删除），正在切换…`;
+  await refreshCampuses();
+  const parts=j.saved.split('/');
+  if(parts.length===2){
+    $('campus').value=parts[0];
+    fillTasks();
+    setTimeout(()=>{ $('task').value=parts[1]; loadTrack(); },250);
+  }
 }
 
 /* ---------------- 历史记录 ---------------- */
@@ -759,6 +1218,7 @@ async function pollStatus(){
   const badge=$('progPhase');
   badge.className='badge '+(p.phase==='done'?'ok':(p.phase==='error'?'bad':'idle'));
   badge.textContent={idle:'未开始',starting:'启动中',running:'上传中',done:'已完成',error:'失败'}[p.phase]||p.phase;
+  STATE_PHASE=p.phase;
   $('log').textContent=j.log||'—';
   $('log').scrollTop=$('log').scrollHeight;
   if(p.phase==='done'&&p.summary&&!$('successBox').dataset.done){
@@ -775,6 +1235,7 @@ async function pollStatus(){
           <div><span>时长</span><b>${s.duration} 秒</b></div>
           <div><span>批次</span><b>${s.batches} 批</b></div>
         </div>
+        ${(p.removed&&p.removed.length)?`<div class="oknote">已删除临时轨迹：${p.removed.join('、')}</div>`:''}
         <div class="oknote">服务端已受理结束请求。成绩是否计入以云运动 App 显示为准。</div>
       </div>`;
   }
@@ -783,7 +1244,8 @@ async function pollStatus(){
 
 /* ---------------- 启动 ---------------- */
 loadUsers().then(()=>loadCfg());
-initMeta();
+initMeta().then(()=>updateCtx());
+
 </script>
 </body>
 </html>

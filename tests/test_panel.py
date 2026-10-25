@@ -407,3 +407,329 @@ def test_history_task_tables_are_shared_across_users():
     assert "tasks_else" in src
     # 保存路径不包含用户名
     assert "user" not in src.split("target_dir")[1].split("save_history_record")[0]
+
+
+# ------------------------------------------------------------- 轨迹自然化
+def test_naturalize_produces_valid_task():
+    r = panel.naturalize("tasks_fch", "tasklist_3.json",
+                         strength="medium", seed=12345, target_km=2.0)
+    assert "error" not in r, r.get("error")
+    m = r["metrics"]
+    assert m["new_km"] == pytest.approx(2.0, abs=0.01)
+    assert m["points"] > 50
+    assert m["dev_median"] > 2.0          # 明显偏离原轨迹
+    assert r["task"]["data"]["pointsList"]
+
+
+def test_naturalize_is_deterministic_per_seed():
+    a = panel.naturalize("tasks_fch", "tasklist_3.json", "medium", 999, 2.0)
+    b = panel.naturalize("tasks_fch", "tasklist_3.json", "medium", 999, 2.0)
+    assert a["new_track"] == b["new_track"]
+    c = panel.naturalize("tasks_fch", "tasklist_3.json", "medium", 1000, 2.0)
+    assert a["new_track"] != c["new_track"]
+
+
+def test_naturalize_strength_ordering():
+    light = panel.naturalize("tasks_fch", "tasklist_3.json", "light", 7, 2.0)
+    strong = panel.naturalize("tasks_fch", "tasklist_3.json", "strong", 7, 2.0)
+    assert strong["metrics"]["dev_median"] > light["metrics"]["dev_median"]
+
+
+def test_naturalize_rejects_bad_input():
+    assert "error" in panel.naturalize("tasks_fch", "nope.json")
+    assert "error" in panel.naturalize("tasks_fch", "tasklist_3.json", "extreme")
+
+
+def test_naturalize_inherits_card_points():
+    """自然化结果必须带源表的踩点信息，否则打表校验会判踩点不足。"""
+    r = panel.naturalize("tasks_fch", "tasklist_3.json", "medium", 42, 2.0)
+    data = r["task"]["data"]
+    manage = data.get("manageList") or []
+    marked = sum(1 for m in manage if str(m.get("marked", "")).upper() == "Y")
+    assert manage, "应继承源表 manageList"
+    assert marked == int(data.get("recodeDislikes"))
+    assert r["task"]["metadata"]["naturalized_from"] == "tasks_fch/tasklist_3.json"
+
+
+def test_naturalized_table_passes_preview(tmp_path):
+    """保存后的自然化任务表能直接进预检，且步频合规。"""
+    r = panel.naturalize("tasks_fch", "tasklist_3.json", "medium", 8888, 2.0)
+    name = "nat_preview_%d" % os.getpid()
+    out = panel.save_naturalized(r["task"], name)
+    try:
+        assert "error" not in out, out.get("error")
+        pv = panel.build_preview("tasks_else", name + ".json")
+        assert "error" not in pv, pv.get("error")
+        assert float(pv["summary"]["km"]) == pytest.approx(2.0, abs=0.01)
+        assert pv["summary"]["spm_ok"] is True
+    finally:
+        path = os.path.join(panel.BASE_DIR, "tasks_else", name + ".json")
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_naturalize_save_and_reuse(tmp_path):
+    r = panel.naturalize("tasks_fch", "tasklist_3.json", "medium", 42, 2.0)
+    name = "nat_pytest_%d" % os.getpid()
+    out = panel.save_naturalized(r["task"], name)
+    try:
+        assert "error" not in out, out.get("error")
+        path = os.path.join(panel.BASE_DIR, out["saved"])
+        assert os.path.exists(path)
+        # 保存的表能直接被预检读取
+        saved = json.load(open(path, encoding="utf-8"))
+        assert len(saved["data"]["pointsList"]) == len(r["new_track"])
+    finally:
+        if "saved" in out:
+            os.remove(os.path.join(panel.BASE_DIR, out["saved"]))
+
+
+# ------------------------------------------------------------- 自然化地图
+def test_naturalize_map_has_height():
+    """Leaflet 容器没有高度就不会渲染——#natMap 必须和 #map 一样有显式高度。"""
+    html = open(os.path.join(panel.BASE_DIR, "panel_ui.html"), encoding="utf-8").read()
+    assert "#map,#natMap{height:" in html.replace(" ", "")
+    assert 'id="natMap"' in html
+
+
+def test_naturalize_map_init_waits_for_layout():
+    """切页后才初始化地图：必须经过 rAF/延迟再 invalidateSize，否则按 0×0 渲染。"""
+    html = open(os.path.join(panel.BASE_DIR, "panel_ui.html"), encoding="utf-8").read()
+    start = html.index("async function openNaturalize()")
+    body = html[start:start + 1600]
+    assert "requestAnimationFrame" in body
+    assert "invalidateSize" in body
+    assert "ensureNatMap()" in body
+
+
+def test_naturalize_api_returns_both_tracks():
+    """对比地图依赖 source_track 与 new_track 两套坐标。"""
+    r = panel.naturalize("tasks_fch", "tasklist_3.json", "medium", 5, 2.0)
+    assert len(r["source_track"]) > 100
+    assert len(r["new_track"]) > 100
+    assert r["source_track"] != r["new_track"]
+
+
+# ------------------------------------------------- 自然化必须满足学校要求
+def test_naturalize_respects_mileage_cap():
+    """目标里程超过学校上限时自动压到上限。"""
+    r = panel.naturalize("tasks_fch", "tasklist_3.json", "medium", 1, 10.0)
+    assert "error" not in r, r.get("error")
+    assert r["metrics"]["new_km"] <= panel._school_requirements()["max_km"] + 1e-6
+
+
+def test_naturalize_output_passes_school_check():
+    """每一档强度生成的结果都要通过学校校验（步频/踩点/里程）。"""
+    req = panel._school_requirements()
+    for st in ("light", "medium", "strong"):
+        r = panel.naturalize("tasks_fch", "tasklist_3.json", st, 4242, 2.0)
+        assert "error" not in r, (st, r.get("error"))
+        cards = panel._card_points_from_manage(r["task"]["data"]["manageList"])
+        assert panel._check_naturalized(r["task"], req, cards) == [], st
+
+
+def test_school_check_rejects_uncovered_cards():
+    """轨迹整体平移后打卡点覆盖不到，校验必须报错。"""
+    import copy
+    r = panel.naturalize("tasks_fch", "tasklist_3.json", "medium", 1, 2.0)
+    bad = copy.deepcopy(r["task"])
+    for x in bad["data"]["pointsList"]:
+        lon, lat = x["point"].split(",")
+        x["point"] = "%f,%s" % (float(lon) + 0.01, lat)
+    cards = panel._card_points_from_manage(bad["data"]["manageList"])
+    errs = panel._check_naturalized(bad, panel._school_requirements(), cards)
+    assert any("打卡点" in e for e in errs)
+
+
+def test_school_check_rejects_bad_cadence():
+    import copy
+    r = panel.naturalize("tasks_fch", "tasklist_3.json", "medium", 1, 2.0)
+    bad = copy.deepcopy(r["task"])
+    for x in bad["data"]["pointsList"]:
+        x["runStep"] = int(x["runStep"]) * 50      # 步频爆表
+    bad["data"]["recodeCadence"] = 9999
+    cards = panel._card_points_from_manage(bad["data"]["manageList"])
+    errs = panel._check_naturalized(bad, panel._school_requirements(), cards)
+    assert any("步频" in e for e in errs)
+
+
+def test_naturalize_retries_with_new_seeds():
+    """校验不过时要换种子重抽，而不是直接失败。"""
+    r = panel.naturalize("tasks_fch", "tasklist_3.json", "medium", 1, 2.0)
+    assert "error" not in r
+    assert r["task"]["metadata"].get("school_checked") is True
+    assert r["task"]["metadata"].get("natural_seed") is not None
+
+
+# ------------------------------------------------- 临时轨迹清理
+def test_save_naturalized_registers_temp_track():
+    panel.STATE["temp_tracks"] = []
+    r = panel.naturalize("tasks_fch", "tasklist_3.json", "medium", 2, 2.0)
+    out = panel.save_naturalized(r["task"], "temp_pytest")
+    try:
+        assert out.get("temp") is True
+        assert out["saved"] in panel._temp_track_paths()
+    finally:
+        panel.cleanup_temp_tracks()
+
+
+def test_cleanup_removes_only_registered_tracks():
+    panel.STATE["temp_tracks"] = []
+    r = panel.naturalize("tasks_fch", "tasklist_3.json", "medium", 3, 2.0)
+    out = panel.save_naturalized(r["task"], "temp_pytest2")
+    path = os.path.join(panel.BASE_DIR, out["saved"])
+    # 放一个不在清单里的文件，不能被误删
+    keep = os.path.join(panel.BASE_DIR, "tasks_else", "keep_me.json")
+    with open(keep, "w", encoding="utf-8") as f:
+        f.write("{}")
+    try:
+        cleaned = panel.cleanup_temp_tracks()
+        assert out["saved"] in cleaned["removed"]
+        assert not os.path.exists(path)
+        assert os.path.exists(keep)          # 未登记的文件保留
+    finally:
+        if os.path.exists(keep):
+            os.remove(keep)
+        panel.STATE["temp_tracks"] = []
+
+
+def test_upload_success_triggers_cleanup(monkeypatch):
+    """上传成功后面板要删掉临时轨迹。"""
+    counter = [0]
+    monkeypatch.setattr(panel.M, "default_client", _fake_client_factory(counter))
+    panel.STATE["temp_tracks"] = []
+    r = panel.naturalize("tasks_fch", "tasklist_3.json", "medium", 4, 2.0)
+    out = panel.save_naturalized(r["task"], "temp_upload")
+    path = os.path.join(panel.BASE_DIR, out["saved"])
+    assert os.path.exists(path)
+    panel.STATE["plan"] = {"campus": "tasks_else", "task": "temp_upload.json",
+                           "summary": {}}
+    panel.start_upload("tasks_else", "temp_upload.json")
+    for _ in range(400):
+        if panel.STATE["progress"]["phase"] in ("done", "error"):
+            break
+        time.sleep(0.05)
+    assert panel.STATE["progress"]["phase"] == "done"
+    assert not os.path.exists(path)          # 已被删除
+    assert out["saved"] in panel.STATE["progress"].get("removed", [])
+
+
+# ------------------------------------------------------------- 路径安全
+def test_safe_task_path_blocks_traversal():
+    ok = panel.safe_task_path("tasks_fch", "tasklist_0.json")
+    assert ok and os.path.isfile(ok)
+    for campus, task in [("..", "config.ini"), ("tasks_fch", "../../config.ini"),
+                         ("tasks_fch", ".gitignore"), ("/etc", "passwd"),
+                         ("tasks_fch", "sub/x.json"), ("", ""),
+                         ("tasks_fch", "../tasks_else/tasklist_0.json")]:
+        assert panel.safe_task_path(campus, task) is None, (campus, task)
+
+
+def test_naturalize_and_track_reject_traversal():
+    assert "error" in panel.naturalize("..", "config.ini")
+    assert "error" in panel.build_preview("tasks_fch", "../../config.ini")
+
+
+def test_invalid_username_raises_instead_of_falling_back():
+    """非法用户名必须报错，不能静默回退到默认用户（会误用别人的 token）。"""
+    with pytest.raises(ValueError):
+        panel.read_config("../evil")
+    with pytest.raises(ValueError):
+        panel.config_path_for("../evil")
+
+
+# ------------------------------------------- 自然化数据的完整性（离线）
+def _audit_task(task):
+    """检查一条任务表是否自洽。返回问题列表。"""
+    d = task["data"]
+    pts = d["pointsList"]
+    errs = []
+    m = [float(x["runMileage"]) for x in pts]
+    t = [int(x["runTime"]) for x in pts]
+    s = [int(x["runStep"]) for x in pts]
+    if any(b < a for a, b in zip(m, m[1:])):
+        errs.append("里程回退")
+    if any(b < a for a, b in zip(t, t[1:])):
+        errs.append("时间回退")
+    if any(b < a for a, b in zip(s, s[1:])):
+        errs.append("步数回退")
+    v = [(b - a) / (dd - c) for a, b, c, dd in zip(m, m[1:], t, t[1:])
+         if dd > c and b > a]
+    if any(not 0.8 <= x <= 8.0 for x in v):
+        errs.append("速度越界")
+    dur = t[-1] - t[0]
+    cad = (s[-1] - s[0]) * 60 / dur
+    if not 40 <= cad <= 300:
+        errs.append("汇总步频 %.0f" % cad)
+    if abs(float(d["recodeCadence"]) - cad) > 1:
+        errs.append("recodeCadence 与点列不符")
+    km = float(d["recordMileage"])
+    if abs(float(d["recodePace"]) - dur / 60 / km) > 0.02:
+        errs.append("配速与点列不符")
+    return errs
+
+
+@pytest.mark.parametrize("strength", ["light", "medium", "strong"])
+def test_naturalized_data_is_self_consistent(strength):
+    """自然化输出必须自洽：单调、速度合理、步频/配速与点列一致。"""
+    r = panel.naturalize("tasks_fch", "tasklist_3.json", strength, 2024, 2.0)
+    assert "error" not in r, r.get("error")
+    assert _audit_task(r["task"]) == []
+
+
+def test_naturalized_packets_valid_for_any_batch_size(monkeypatch):
+    """真实批量由服务端 passPointNum 决定，任何批量下每个包都要合规。"""
+    import main as M
+    from yun_http import FakeTransport, SM2Box, YunClient
+    import shutil, tempfile
+
+    r = panel.naturalize("tasks_fch", "tasklist_3.json", "medium", 2024, 2.0)
+    out = panel.save_naturalized(r["task"], "audit_pkt_%d" % os.getpid())
+    path = os.path.join(panel.BASE_DIR, out["saved"])
+    try:
+        for ppn in (None, 5, 10, 30):
+            home = {"code": 200, "data": {"cralist": [{
+                "id": 1, "schoolId": "100", "raType": "T1", "raRunArea": "A",
+                "raDislikes": 3, "raSingleMileageMin": 1.9,
+                "raSingleMileageMax": 3.0, "raCadenceMin": 40,
+                "raCadenceMax": 300, "runFaceStatus": "N", "points": "",
+                **({"passPointNum": ppn} if ppn else {})}]}}
+
+            def resp(rt, env, _h=home):
+                if rt.endswith("getHomeRunInfo"):
+                    return _h
+                if rt.endswith("/run/start"):
+                    return {"code": 200, "data": {"recordStartTime": "x", "id": 9,
+                                                  "studentId": "S", "faceTime": 0,
+                                                  "canSport": "Y"}}
+                if rt.endswith("/run/isStandard"):
+                    return {"code": 200, "data": {"isStandard": "Y", "isCheat": "N"}}
+                return {"code": 200, "msg": "ok", "data": None}
+
+            M.set_args(CFG)
+            prof = M.build_profile(M._CONF)
+            fake = FakeTransport(resp, sm2box=SM2Box(M.PUBLIC_KEY, M.PRIVATE_KEY),
+                                 fallback_key_b64=prof.cipherkey or None)
+            client = YunClient(prof, base_url=M.my_host, transport=fake,
+                               sleep=lambda s: None)
+            yun = M.Yun_For_New(client=client, home_info=home)
+            yun.start()
+            td = tempfile.mkdtemp()
+            shutil.copy(path, os.path.join(td, "t.json"))
+            yun.do_by_points_map(path=td, random_choose=True)
+            yun.finish_by_points_map()
+            splits = [c for c in fake.calls
+                      if c["router"].endswith("/run/splitPointCheating")]
+            assert splits
+            for c in splits:
+                b = c["business"]
+                assert 40 <= b["runSteps"] <= 300, (ppn, b["runSteps"])
+                assert len(b["cardPointList"]) >= 2, (ppn, "单点包")
+            fin = [c for c in fake.calls
+                   if c["router"].endswith("/run/finish")][0]["business"]
+            assert 40 <= float(fin["recodeCadence"]) <= 300
+            assert float(fin["recordMileage"]) <= 2.0 + 1e-6
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+        panel.STATE["temp_tracks"] = []

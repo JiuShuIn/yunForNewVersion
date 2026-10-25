@@ -34,6 +34,7 @@ import time
 import traceback
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -112,6 +113,27 @@ def list_campuses():
             if files:
                 out[d] = files
     return out
+
+
+def safe_task_path(campus, task):
+    """把 (campus, task) 解析成仓库内的任务表路径；越界返回 None。
+
+    只允许 tasks_* 目录下的 .json，拒绝 ../、绝对路径、符号链接逃逸。
+    所有接受前端路径参数的端点都必须走这里。
+    """
+    if not campus or not task:
+        return None
+    if "/" in campus or "\\" in campus or campus in (".", ".."):
+        return None
+    if not campus.startswith("tasks_"):
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9_.\-]+\.json", task) or task.startswith("."):
+        return None
+    base = os.path.realpath(os.path.join(BASE_DIR, campus))
+    path = os.path.realpath(os.path.join(base, task))
+    if not path.startswith(base + os.sep):
+        return None
+    return path if os.path.isfile(path) else None
 
 
 def _task_points(path):
@@ -218,7 +240,11 @@ def delete_user(name):
 
 
 def read_config(name=DEFAULT_USER):
-    path = _user_path(name) or _ensure_default_user()
+    path = _user_path(name)
+    if path is None:
+        raise ValueError("用户名非法：%r" % (name,))
+    if not os.path.exists(path):
+        path = _ensure_default_user()
     cp = configparser.ConfigParser()
     cp.read(path, encoding="utf-8")
     out = {}
@@ -256,8 +282,15 @@ def save_config(payload, name=DEFAULT_USER):
 
 
 def config_path_for(name):
-    """上传/预检用：返回该用户的配置文件绝对路径（不存在则建默认）。"""
-    return _user_path(name) or _ensure_default_user()
+    """上传/预检用：返回该用户的配置文件绝对路径。
+
+    非法用户名直接报错（不能静默回退到默认用户，否则会用别人的 token 上传）。
+    合法但尚未创建的用户回退到默认配置。
+    """
+    path = _user_path(name)
+    if path is None:
+        raise ValueError("用户名非法：%r" % (name,))
+    return path if os.path.exists(path) else _ensure_default_user()
 
 
 # ------------------------------------------------------------------ 预检引擎
@@ -338,11 +371,253 @@ def _home_fixture(task_path, campus):
     }
 
 
+def _school_requirements():
+    """读取学校/本地的硬性要求（来自 config.ini [Run] 与固定契约）。"""
+    cp = configparser.ConfigParser()
+    cp.read(config_path_for(DEFAULT_USER), encoding="utf-8")
+    try:
+        max_km = float(cp.get("Run", "max_mileage_km", fallback="0") or 0)
+    except ValueError:
+        max_km = 0.0
+    try:
+        min_dislikes = int(cp.get("Run", "min_dislikes", fallback="0") or 0)
+    except ValueError:
+        min_dislikes = 0
+    return {
+        "max_km": max_km if max_km > 0 else None,
+        "min_dislikes": min_dislikes,
+        "spm_bounds": M.SERVER_SPM_BOUNDS,     # (40, 300)
+    }
+
+
+def _card_points_from_manage(manage_list):
+    """manageList -> [(lon, lat, marked)]，用于几何覆盖校验。"""
+    out = []
+    for m in (manage_list or []):
+        try:
+            lon, lat = str(m.get("point", "")).split(",")
+            out.append((float(lon), float(lat),
+                        str(m.get("marked", "")).strip().upper() == "Y"))
+        except (ValueError, AttributeError):
+            continue
+    return out
+
+
+def _check_naturalized(task, req, card_points):
+    """校验一条自然化任务是否满足学校要求。返回错误列表（空 = 通过）。"""
+    errs = []
+    data = task.get("data") or {}
+    pts = data.get("pointsList") or []
+
+    # 1. 里程上限
+    km = float(data.get("recordMileage") or 0)
+    if req["max_km"] and km > req["max_km"] + 1e-6:
+        errs.append("里程 %.2f km 超过上限 %.2f km" % (km, req["max_km"]))
+
+    # 2. 步频：逐包检查（与上传时的 runSteps 同口径）
+    lo, hi = req["spm_bounds"]
+    batch = 11
+    for i in range(0, len(pts), batch):
+        chunk = pts[i:i + batch]
+        if len(chunk) < 2:
+            continue
+        dur = int(chunk[-1]["runTime"]) - int(chunk[0]["runTime"])
+        if dur <= 0:
+            continue
+        steps = int(chunk[-1]["runStep"]) - int(chunk[0]["runStep"])
+        spm = steps * 60.0 / dur
+        if not lo <= spm <= hi:
+            errs.append("第 %d 批步频 %.0f 超出 %g~%g" %
+                        (i // batch + 1, spm, lo, hi))
+            break
+    cad = float(data.get("recodeCadence") or 0)
+    if cad and not lo <= cad <= hi:
+        errs.append("汇总步频 %.0f 超出 %g~%g" % (cad, lo, hi))
+
+    # 3. 踩点：既看标记数量，也看几何是否真的经过打卡点
+    marked = sum(1 for m in (data.get("manageList") or [])
+                 if str(m.get("marked", "")).strip().upper() == "Y")
+    if marked < req["min_dislikes"]:
+        errs.append("标记踩点 %d 个，要求至少 %d 个" %
+                    (marked, req["min_dislikes"]))
+    if card_points:
+        track = []
+        for r in pts:
+            try:
+                lon, lat = str(r.get("point", "")).split(",")
+                track.append((float(lon), float(lat)))
+            except (ValueError, AttributeError):
+                continue
+        # 打卡半径沿用服务端下发的默认 20m
+        covered = sum(1 for lon, lat, _ in card_points
+                      if any(yun_route.distance((lon, lat), p) <= 20.0
+                             for p in track))
+        need = max(marked, req["min_dislikes"])
+        if covered < need:
+            errs.append("轨迹实际只经过 %d/%d 个打卡点，要求至少 %d 个" %
+                        (covered, len(card_points), need))
+    return errs
+
+
+def naturalize(campus, task, strength="medium", seed=None, target_km=None):
+    """把任务表轨迹形变成一条新的自然轨迹，返回可上传的任务表 + 对比数据。
+
+    只做几何与节奏生成，**不联网**。输出是完整任务表，可保存后在预检里使用。
+
+    strength: light / medium / strong，对应 NATURAL_STRENGTHS 三档。
+    seed:     None 时随机（每次不同）；给固定值可复现。
+    target_km: 目标里程；None 时沿用源表里程。
+    """
+    task_path = safe_task_path(campus, task)
+    if not task_path:
+        return {"error": "任务表不存在或路径非法：%s/%s" % (campus, task)}
+    if strength not in yun_route.NATURAL_STRENGTHS:
+        return {"error": "未知强度：%s" % strength}
+
+    src, metrics = yun_route.load_source(task_path)
+    j = json.load(open(task_path, encoding="utf-8-sig"))
+    d = j.get("data") or {}
+    km = float(d.get("recordMileage") or 0) or (metrics["length_m"] / 1000.0)
+    target = float(target_km) if target_km else km
+    seed = int(seed) if seed not in (None, "") else random.randrange(1, 2**31)
+
+    prof = dict(yun_route.NATURAL_PROFILE, **yun_route.NATURAL_STRENGTHS[strength])
+    cfg = {
+        "source_points": [[p[0], p[1]] for p in src],
+        "coordinate_system": "GCJ-02",
+        "distance_m": round(target * 1000, 3),
+        "sample_seconds": 2,
+        "seed": seed,
+        "deform_profile": prof,
+        # 节奏沿用源表的实测值，越界时由 generate_cfg 回退名义值
+        "pace_min_km": round(metrics["pace_min_km"] or 6.0, 3),
+        "cadence_spm": round(metrics["cadence_spm"] or 160.0, 3),
+        "pace_offset_pct": 0.0,
+        "cadence_offset_pct": 0.0,
+    }
+    # 学校要求：里程上限、最少踩点数、步频区间
+    req = _school_requirements()
+    # 目标里程不得超过学校上限
+    if req["max_km"] and target > req["max_km"]:
+        target = req["max_km"]
+        cfg["distance_m"] = round(target * 1000, 3)
+    src_manage = d.get("manageList") or []
+    card_points = _card_points_from_manage(src_manage)
+
+    # 生成 → 校验 → 不满足就换种子重抽。
+    # 必须在这里就保证合规，否则用户保存后才发现预检不过。
+    attempts = 8
+    last_err = ""
+    gen = None
+    used_seed = seed
+    for i in range(attempts):
+        used_seed = seed + i * 100003
+        cfg["seed"] = used_seed
+        try:
+            cand = yun_route.generate_cfg(cfg, Path(BASE_DIR))
+        except ValueError as exc:
+            last_err = str(exc)
+            continue
+        # 继承踩点信息
+        if src_manage:
+            cand["data"]["manageList"] = [dict(m) for m in src_manage]
+            cand["data"]["recodeDislikes"] = sum(
+                1 for m in src_manage
+                if str(m.get("marked", "")).strip().upper() == "Y")
+        errs = _check_naturalized(cand, req, card_points)
+        if not errs:
+            gen = cand
+            break
+        last_err = "；".join(errs)
+    if gen is None:
+        return {"error": "连续 %d 次生成都不满足学校要求（最后一次：%s）"
+                         % (attempts, last_err), "attempts": attempts}
+
+    gen["metadata"]["naturalized_from"] = "%s/%s" % (campus, task)
+    gen["metadata"]["natural_strength"] = strength
+    gen["metadata"]["natural_seed"] = used_seed
+    gen["metadata"]["school_checked"] = True
+    seed = used_seed
+
+    out = [(float(r["point"].split(",")[0]), float(r["point"].split(",")[1]))
+           for r in gen["data"]["pointsList"]]
+    devs = sorted(min(yun_route.distance(p, q) for q in src) for p in out)
+    chord = sum(yun_route.distance(a, b) for a, b in zip(out, out[1:]))
+    return {
+        "task": gen,
+        "seed": seed,
+        "strength": strength,
+        "source_track": [[p[0], p[1]] for p in src],
+        "new_track": [[p[0], p[1]] for p in out],
+        "metrics": {
+            "src_km": round(metrics["length_m"] / 1000.0, 3),
+            "new_km": round(gen["data"]["recordMileage"], 3),
+            "chord_m": round(chord, 1),
+            "dev_median": round(devs[len(devs) // 2], 2),
+            "dev_p90": round(devs[int(len(devs) * 0.9)], 2),
+            "dev_max": round(devs[-1], 2),
+            "points": len(out),
+            "cadence": round(gen["data"]["recodeCadence"], 1),
+            "pace": round(gen["data"]["recodePace"], 2),
+        },
+    }
+
+
+def _temp_track_paths():
+    """本次会话里由自然化产生、待上传成功后删除的临时任务表。"""
+    return STATE.setdefault("temp_tracks", [])
+
+
+def register_temp_track(rel_path):
+    """登记一个临时任务表，上传成功后自动删除。"""
+    lst = _temp_track_paths()
+    if rel_path and rel_path not in lst:
+        lst.append(rel_path)
+    return {"ok": True, "tracked": list(lst)}
+
+
+def cleanup_temp_tracks(keep_failed=True):
+    """删除本次会话登记的临时任务表。
+
+    keep_failed=True 时只在调用方明确表示"上传成功"后才删；
+    失败时保留文件，方便用户排查或重试。
+    """
+    removed, kept = [], []
+    for rel in list(_temp_track_paths()):
+        path = os.path.join(BASE_DIR, rel)
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+                removed.append(rel)
+        except OSError:
+            kept.append(rel)
+    STATE["temp_tracks"] = kept
+    return {"removed": removed, "kept": kept}
+
+
+def save_naturalized(task_obj, name):
+    """把自然化结果保存成 tasks_else 下的任务表（编号续接）。"""
+    if not isinstance(task_obj, dict) or "data" not in task_obj:
+        return {"error": "任务表格式非法"}
+    if not re.fullmatch(r"[A-Za-z0-9_\-]{1,32}", name or ""):
+        return {"error": "名称只能用字母数字下划线短横线"}
+    target_dir = os.path.join(BASE_DIR, "tasks_else")
+    os.makedirs(target_dir, exist_ok=True)
+    path = os.path.join(target_dir, name + ".json")
+    if os.path.exists(path):
+        return {"error": "文件已存在：tasks_else/%s.json" % name}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(task_obj, f, ensure_ascii=False, indent=1)
+    rel = "tasks_else/%s.json" % name
+    register_temp_track(rel)
+    return {"saved": rel, "temp": True}
+
+
 def build_preview(campus, task, user=DEFAULT_USER):
     """跑一次完整的离线流程，返回逐步明细。不发任何真实请求。"""
-    task_path = os.path.join(BASE_DIR, campus, task)
-    if not os.path.isfile(task_path):
-        return {"error": "任务表不存在：%s/%s" % (campus, task)}
+    task_path = safe_task_path(campus, task)
+    if not task_path:
+        return {"error": "任务表不存在或路径非法：%s/%s" % (campus, task)}
 
     M.set_args(config_path_for(user))
     profile = M.build_profile(M._CONF)
@@ -581,7 +856,13 @@ def start_upload(campus, task, user=DEFAULT_USER):
 
 
 def _run_upload(campus, task, user=DEFAULT_USER):
-    task_path = os.path.join(BASE_DIR, campus, task)
+    task_path = safe_task_path(campus, task)
+    if not task_path:
+        log_line = "任务表不存在或路径非法：%s/%s" % (campus, task)
+        with STATE["lock"]:
+            STATE["progress"].update(phase="error", detail=log_line)
+            STATE["log"].append(log_line + chr(10))
+        return
     # 每个上传用独立子目录：预检与上传可能并发，共用一个目录会互相删文件。
     pick = os.path.join(PICK_DIR, "%s_%d" % (
         os.path.splitext(task)[0], threading.get_ident()))
@@ -665,9 +946,14 @@ def _run_upload(campus, task, user=DEFAULT_USER):
         log("  时长      %s 秒" % d.get("duration"))
         log("  批次      %d 批" % counter["n"])
         log("=" * 52)
+        # 上传成功：删掉本次生成的临时轨迹
+        cleaned = cleanup_temp_tracks()
+        if cleaned["removed"]:
+            log("已删除临时轨迹：" + "、".join(cleaned["removed"]))
         with STATE["lock"]:
             STATE["progress"].update(
                 phase="done", detail="上传成功",
+                removed=cleaned["removed"],
                 summary={"km": d.get("recordMileage"),
                          "pace": round(float(d.get("recodePace") or 0), 2),
                          "cadence": round(float(d.get("recodeCadence") or 0)),
@@ -790,7 +1076,8 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == "/api/meta":
                 self._json({"campuses": list_campuses(),
                             "max_mileage_km": _cap_km(),
-                            "supported_campus": SUPPORTED_CAMPUS})
+                            "supported_campus": SUPPORTED_CAMPUS,
+                            "temp_tracks": list(_temp_track_paths())})
             elif u.path == "/api/users":
                 self._json({"users": list_users(), "current": DEFAULT_USER})
             elif u.path == "/api/config":
@@ -798,9 +1085,9 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == "/api/track":
                 campus = (q.get("campus") or [""])[0]
                 task = (q.get("task") or [""])[0]
-                path = os.path.join(BASE_DIR, campus, task)
-                if not os.path.isfile(path):
-                    self._json({"error": "任务表不存在"})
+                path = safe_task_path(campus, task)
+                if not path:
+                    self._json({"error": "任务表不存在或路径非法"})
                 else:
                     pts, km = _task_points(path)
                     self._json({"track": pts, "km": round(km, 3),
@@ -815,6 +1102,13 @@ class Handler(BaseHTTPRequestHandler):
                                      else {"campus": campus, "task": task,
                                            "summary": out["summary"]})
                 self._json(out)
+            elif u.path == "/api/naturalize":
+                self._json(naturalize(
+                    (q.get("campus") or [""])[0],
+                    (q.get("task") or [""])[0],
+                    (q.get("strength") or ["medium"])[0],
+                    (q.get("seed") or [None])[0],
+                    (q.get("km") or [None])[0] or None))
             elif u.path == "/api/history/terms":
                 self._json(history_terms((q.get("user") or [DEFAULT_USER])[0]))
             elif u.path == "/api/history/runs":
@@ -847,6 +1141,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(create_user(body.get("name")))
             elif u.path == "/api/users/delete":
                 self._json(delete_user(body.get("name")))
+            elif u.path == "/api/naturalize/cleanup":
+                self._json(cleanup_temp_tracks())
+            elif u.path == "/api/naturalize/save":
+                self._json(save_naturalized(body.get("task"), body.get("name")))
             elif u.path == "/api/history/fetch":
                 self._json(history_fetch(body.get("id"), body.get("table"),
                                          body.get("out_dir"),

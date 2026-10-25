@@ -539,3 +539,85 @@ def test_deform_scale_max_above_one_tries_larger_first(tmp_path):
     """上限 >1 时应从上限往下试：没有围栏时第一档（即上限）直接通过。"""
     task = R.generate(config(tmp_path, auto_fit_deform=True, deform_scale_max=2.0))
     assert task['metadata']['deform_scale'] == pytest.approx(2.0)
+
+
+# ------------------------------------------------------- 自然化（航向扰动）
+def test_demo_profile_is_unchanged_by_natural_feature():
+    """默认 profile 不开启航向扰动，历史演示包基准必须原样复现。"""
+    assert R.DEMO_PROFILE["heading_sigma_deg"] == 0.0
+    out = R.deform_geometry(R.load_points(DEMO_SOURCE), seed=31337)
+    assert len(out) == 686
+
+
+def test_natural_profiles_increase_deviation():
+    """natural 档位应当明显偏离源轨迹，且强度越大偏得越多。"""
+    src = R.load_points(SOURCE)
+    def median_dev(prof):
+        out = R.deform_points(src, seed=31337, profile=prof)
+        devs = sorted(min(R.distance(p, q) for q in src) for p in out)
+        return devs[len(devs) // 2]
+    light = median_dev(dict(R.NATURAL_PROFILE, **R.NATURAL_STRENGTHS["light"]))
+    medium = median_dev(dict(R.NATURAL_PROFILE, **R.NATURAL_STRENGTHS["medium"]))
+    strong = median_dev(dict(R.NATURAL_PROFILE, **R.NATURAL_STRENGTHS["strong"]))
+    # 三档必须单调递增（light 可以比 demo 更保守，这是有意为之：
+    # 操场尺度下 demo 的偏移已经接近场地边缘）
+    assert light < medium < strong
+    assert strong > R.DEMO_PROFILE["lane_sigma_m"] / 2   # strong 确实更激进
+
+
+def test_natural_output_stays_within_field():
+    """偏移不能把轨迹甩出操场：包围盒外扩必须小于场地半宽。
+
+    合工大翡翠湖操场实测 82~120m × 166~190m；旧版 strong 档最大偏移
+    108m 会明显跑出场地，这条测试钉住"不越界"这个约束。
+    """
+    src = R.load_points(SOURCE)
+    xs = [p[0] for p in src]
+    ys = [p[1] for p in src]
+    import math as _m
+    lat0 = sum(ys) / len(ys)
+    sx, sy = 111320 * _m.cos(_m.radians(lat0)), 111320
+    bw = (max(xs) - min(xs)) * sx
+    bh = (max(ys) - min(ys)) * sy
+    for key in R.NATURAL_STRENGTHS:
+        prof = dict(R.NATURAL_PROFILE, **R.NATURAL_STRENGTHS[key])
+        out = R.deform_points(src, seed=31337, profile=prof)
+        ox = [p[0] for p in out]
+        oy = [p[1] for p in out]
+        grow_x = ((max(ox) - min(ox)) * sx - bw) / 2
+        grow_y = ((max(oy) - min(oy)) * sy - bh) / 2
+        # 每侧外扩不超过 20m（约半个直道宽），三档都必须满足
+        assert grow_x < 20, (key, grow_x)
+        assert grow_y < 20, (key, grow_y)
+
+
+def test_natural_output_stays_continuous():
+    """形变后不能出现断裂（相邻点距离暴涨）或长度失控。"""
+    src = R.load_points(SOURCE)
+    for key in R.NATURAL_STRENGTHS:
+        prof = dict(R.NATURAL_PROFILE, **R.NATURAL_STRENGTHS[key])
+        out = R.deform_points(src, seed=31337, profile=prof)
+        segs = [R.distance(a, b) for a, b in zip(out, out[1:])]
+        assert max(segs) < 60, key                 # 单段不超过 60m
+        length = sum(segs)
+        src_len = sum(R.distance(a, b) for a, b in zip(src, src[1:]))
+        assert 0.8 * src_len < length < 1.6 * src_len, key
+
+
+def test_heading_bend_keeps_start_point():
+    """航向扰动从原点出发：起点必须与源一致（跑步总从同一处开始）。"""
+    src = R.load_points(SOURCE)
+    out = R.deform_points(src, seed=31337,
+                          profile=dict(R.NATURAL_PROFILE,
+                                       **R.NATURAL_STRENGTHS["medium"]))
+    assert R.distance(out[0], src[0]) < 1.0
+
+
+def test_natural_is_deterministic_per_seed():
+    src = R.load_points(SOURCE)
+    prof = dict(R.NATURAL_PROFILE, **R.NATURAL_STRENGTHS["medium"])
+    a = R.deform_points(src, seed=777, profile=prof)
+    b = R.deform_points(src, seed=777, profile=prof)
+    c = R.deform_points(src, seed=778, profile=prof)
+    assert a == b
+    assert a != c
