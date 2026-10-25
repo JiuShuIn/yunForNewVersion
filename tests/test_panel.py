@@ -168,25 +168,28 @@ def test_config_roundtrip_keeps_secrets(tmp_path, monkeypatch):
     assert "SECRET" in cfg.read_text(encoding="utf-8")
 
 
-# ------------------------------------------------------------- 适用范围守卫
-def test_only_fch_campus_is_exposed():
-    """面板只针对合工大 fch 打表模式验证过，不应暴露其他校区。"""
-    assert panel.SUPPORTED_CAMPUS == "tasks_fch"
-    assert list(panel.list_campuses()) == ["tasks_fch"]
+# ------------------------------------------------------------- 校区可选范围
+def test_all_campuses_are_listed():
+    """不再强制过滤：所有 tasks_* 目录都应可选，由界面提示"未验证"。"""
+    camps = list(panel.list_campuses())
+    assert "tasks_fch" in camps
+    assert panel.SUPPORTED_CAMPUS == "tasks_fch"     # 仅作"已验证"标记
+    assert len(camps) >= 1
 
 
-def test_preview_rejects_other_campus():
-    out = panel.build_preview("tasks_xc", "tasklist_4.json")
-    assert "error" in out
-    assert "python main.py" in out["error"]
+def test_preview_accepts_other_campus(tmp_path):
+    """其他校区允许预检（只是未验证），不再被后端拒绝。"""
+    out = panel.build_preview("tasks_txl", "tasklist_0.json")
+    assert "只支持" not in (out.get("error") or "")
 
 
-def test_upload_rejects_other_campus():
-    panel.STATE["plan"] = {"campus": "tasks_xc", "task": "tasklist_4.json",
+def test_upload_accepts_other_campus_after_preview():
+    """其他校区同样走"预检 → 确认"流程，不再被硬性拒绝。"""
+    panel.STATE["plan"] = {"campus": "tasks_txl", "task": "tasklist_0.json",
                            "summary": {}}
-    r = panel.start_upload("tasks_xc", "tasklist_4.json")
-    assert "error" in r
-    assert "python main.py" in r["error"]
+    r = panel.start_upload("tasks_txl", "tasklist_0.json")
+    assert "只支持" not in (r.get("error") or "")
+    panel.STATE["plan"] = None
 
 
 def test_map_uses_gcj02_base_map():
@@ -301,3 +304,36 @@ def test_progress_counts_points_not_batches(monkeypatch):
     assert pr["sent"] <= pr["total"]              # 不会超过 100%
     assert pr["sent"] == pr["total"]              # 跑完后正好用满
     assert pr["batches_sent"] == counter[0]
+
+
+# ------------------------------------------------------------- 历史记录
+def test_history_rejects_invalid_table_name():
+    """表名必须匹配白名单，防止路径穿越/注入到服务端参数里。"""
+    for bad in ("../etc/passwd", "a b", "t;drop", ""):
+        assert "error" in panel.history_runs(bad)
+        assert "error" in panel.history_fetch("123", bad)
+
+
+def test_history_fetch_requires_id_and_table():
+    assert "error" in panel.history_fetch("", "")
+    assert "error" in panel.history_fetch("123", "")
+
+
+def test_history_save_appends_numbered_files(tmp_path):
+    """保存沿用 history.save_history_record：编号续接、不覆盖。"""
+    import history
+    payload = json.dumps({"code": 200, "data": {"recordMileage": 2.0,
+                                               "pointsList": []}})
+    p0 = history.save_history_record(payload, str(tmp_path))
+    p1 = history.save_history_record(payload, str(tmp_path))
+    assert os.path.basename(p0) == "tasklist_0.json"
+    assert os.path.basename(p1) == "tasklist_1.json"
+    assert json.load(open(p0, encoding="utf-8"))["code"] == 200
+
+
+def test_history_endpoints_registered():
+    """三个历史记录端点都要在 Handler 里可路由。"""
+    import inspect
+    src = inspect.getsource(panel.Handler)
+    for path in ("/api/history/terms", "/api/history/runs", "/api/history/fetch"):
+        assert path in src

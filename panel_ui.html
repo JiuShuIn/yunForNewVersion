@@ -152,10 +152,11 @@ table.req .act{font-family:Consolas,monospace;font-weight:650}
     <div class="step" data-go="2"><span class="n">2</span>选择路线</div>
     <div class="step" data-go="3"><span class="n">3</span>上传预检</div>
     <div class="step" data-go="4"><span class="n">4</span>执行上传</div>
+    <div class="step" data-go="5"><span class="n">5</span>历史记录</div>
     <div class="foot">
-      <b>适用范围</b><br>
-      本面板仅针对 <b>合肥工业大学 fch 打表模式</b>做了验证与优化。<br>
-      合成轨迹、人脸核验、其他校区等场景请用 <code>python main.py</code>。<br><br>
+      <b>已验证范围</b><br>
+      <b>合肥工业大学 fch 打表模式</b>经过完整实测。<br>
+      其他校区可选但未验证；合成轨迹、人脸核验请用 <code>python main.py</code>。<br><br>
       全部请求经本机代理<br><b>127.0.0.1</b> · 仅本机可访问
     </div>
   </aside>
@@ -163,9 +164,7 @@ table.req .act{font-family:Consolas,monospace;font-weight:650}
   <div class="main">
     <div class="top">
       <div class="crumb">工作台 / <b id="crumb">配置信息</b></div>
-      <div class="pill" style="background:#fff8ec;border-color:#f2dfba;color:#8a5a10">
-        <i style="background:#c98213"></i>仅支持合工大 fch 打表模式
-      </div>
+      <div class="pill"><i></i>本地运行</div>
     </div>
 
     <div class="body">
@@ -173,6 +172,12 @@ table.req .act{font-family:Consolas,monospace;font-weight:650}
       <section class="pane on" id="pane1">
         <h1>配置信息</h1>
         <p class="sub">读取自 config.ini。敏感字段显示为掩码，未修改则不会写回文件。</p>
+        <div class="warn" style="background:#eef5ff;border-color:#dce9ff;color:#2c4a7c">
+          <b>只需填写 [User] 段</b>：<code>token</code>、<code>device_id</code>、
+          <code>device_name</code>、<code>sys_edition</code>。<br>
+          其余字段（<code>[Yun]</code> 的密钥与服务器、<code>[Run]</code> 的跑步参数、
+          <code>[Login]</code>）<b>请保持原样不要改动</b>——改错会直接导致上传失败。
+        </div>
         <div class="card">
           <h2>账号与服务器 <small>token / 密码等敏感项留空或保持掩码即不修改</small></h2>
           <div id="cfgForm"></div>
@@ -189,9 +194,9 @@ table.req .act{font-family:Consolas,monospace;font-weight:650}
         <h1>选择路线</h1>
         <p class="sub">打表模式：直接回放一张已有的任务表。地图显示轨迹与打卡点。</p>
         <div class="warn" style="margin-bottom:16px">
-          本面板的预检、校验与真人化修正只针对<b>合肥工业大学 fch 校区的打表模式</b>
-          做过完整验证。其他校区任务表虽然也能选，但未经验证；合成轨迹、人脸核验等
-          场景请直接使用 <code>python main.py</code>。
+          <b>已验证：合肥工业大学 fch 校区的打表模式。</b>
+          其他校区（txl / xc）同样可以选，但未经过完整实测，请自行确认任务表参数。
+          合成轨迹、人脸核验等场景请使用 <code>python main.py</code>。
         </div>
         <div class="grid2">
           <div class="card">
@@ -261,6 +266,41 @@ table.req .act{font-family:Consolas,monospace;font-weight:650}
         </div>
       </section>
 
+      <!-- ============ 5 历史记录 ============ -->
+      <section class="pane" id="pane5">
+        <h1>历史记录</h1>
+        <p class="sub">从服务器拉取以前的跑步记录，保存为本地任务表文件（可在「选择路线」里直接回放）。</p>
+        <div class="grid2">
+          <div class="card">
+            <h2>跑步记录 <small id="histInfo"></small></h2>
+            <div style="display:flex;gap:9px;align-items:end;margin-bottom:14px">
+              <label class="f" style="flex:1;margin:0">
+                <span>学期</span>
+                <select id="histTerm" onchange="loadRuns()"></select>
+              </label>
+              <button class="btn" onclick="loadTerms()">刷新</button>
+            </div>
+            <div id="histErr"></div>
+            <table class="req" id="runTable">
+              <thead><tr><th>结束时间</th><th>里程</th><th>任务</th><th></th></tr></thead>
+              <tbody><tr><td colspan="4" style="color:var(--hint)">点击「刷新」加载学期列表</td></tr></tbody>
+            </table>
+          </div>
+          <div class="card">
+            <h2>保存到本地</h2>
+            <div id="histResult" style="color:var(--hint);font-size:12.5px">
+              选择左侧一条记录，点击「拉取并保存」。
+            </div>
+            <div class="sec-title" style="margin-top:18px">说明</div>
+            <div style="font-size:12px;color:var(--muted);line-height:1.75">
+              保存位置：<code>tasks_else/tasklist_N.json</code><br>
+              编号自动续接，不会覆盖已有文件。<br>
+              保存后可在「选择路线」里选中该表直接回放。
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- ============ 4 上传 ============ -->
       <section class="pane" id="pane4">
         <h1>执行上传</h1>
@@ -288,8 +328,9 @@ function go(n){
   $('pane'+n).classList.add('on');
   document.querySelectorAll('.step').forEach(s=>
     s.classList.toggle('on', s.dataset.go===String(n)));
-  $('crumb').textContent = {1:'配置信息',2:'选择路线',3:'上传预检',4:'执行上传'}[n];
+  $('crumb').textContent = {1:'配置信息',2:'选择路线',3:'上传预检',4:'执行上传',5:'历史记录'}[n];
   if(n===2 && MAP) setTimeout(()=>MAP.invalidateSize(),60);
+  if(n===5 && !HIST_TERMS.length) loadTerms();
 }
 document.querySelectorAll('.step').forEach(s=>s.onclick=()=>go(+s.dataset.go));
 
@@ -466,6 +507,70 @@ function renderSteps(steps){
 }
 function syncGo(){
   $('goBtn').disabled = !(PREVIEWED && $('ack').checked);
+}
+
+/* ---------------- 历史记录 ---------------- */
+let HIST_TERMS = [];
+async function loadTerms(){
+  $('histErr').innerHTML='';
+  $('histInfo').textContent='加载中…';
+  const j = await (await fetch('/api/history/terms')).json();
+  if(j.error){ $('histErr').innerHTML=`<div class="err">${j.error}</div>`;
+    $('histInfo').textContent=''; return; }
+  HIST_TERMS = j.terms || [];
+  const sel=$('histTerm');
+  sel.innerHTML = HIST_TERMS.map(t=>`<option value="${t.value}">${t.key}（${t.sjd||''}）</option>`).join('');
+  $('histInfo').textContent = `${HIST_TERMS.length} 个学期`;
+  if(HIST_TERMS.length) loadRuns();
+}
+async function loadRuns(){
+  const table=$('histTerm').value;
+  const tb=$('runTable').querySelector('tbody');
+  tb.innerHTML='<tr><td colspan="4" style="color:var(--hint)">加载中…</td></tr>';
+  $('histErr').innerHTML='';
+  const j = await (await fetch(`/api/history/runs?table=${encodeURIComponent(table)}`)).json();
+  if(j.error){ $('histErr').innerHTML=`<div class="err">${j.error}</div>`; tb.innerHTML=''; return; }
+  const runs=j.runs||[];
+  if(!runs.length){ tb.innerHTML='<tr><td colspan="4" style="color:var(--hint)">本学期没有记录</td></tr>'; return; }
+  tb.innerHTML = runs.map(r=>`<tr>
+    <td>${r.endTime||'—'}</td>
+    <td class="act">${r.recordMileage ?? '—'} km</td>
+    <td style="font-size:11.5px;color:var(--muted)">${r.raName||''}</td>
+    <td style="text-align:right">
+      <button class="btn sm" onclick="fetchRun('${r.id}','${table}')">拉取并保存</button>
+    </td></tr>`).join('');
+}
+async function fetchRun(id, table){
+  const box=$('histResult');
+  box.innerHTML='<span style="color:var(--hint)">正在拉取…</span>';
+  const r = await fetch('/api/history/fetch',{method:'POST',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({id, table})});
+  const j = await r.json();
+  if(j.error){ box.innerHTML=`<div class="err">${j.error}</div>`; return; }
+  const s=j.summary||{};
+  box.innerHTML=`
+    <div class="badge ok" style="margin-bottom:10px">已保存</div>
+    <dl class="kv">
+      <dt>文件</dt><dd class="act">${j.saved}</dd>
+      <dt>时间</dt><dd style="font-size:11.5px">${s.start||''} ~ ${s.end||''}</dd>
+      <dt>里程</dt><dd>${s.km} km</dd>
+      <dt>配速</dt><dd>${s.pace} min/km</dd>
+      <dt>步频</dt><dd>${s.cadence} spm</dd>
+      <dt>用时</dt><dd>${s.duration} 秒</dd>
+      <dt>踩点数</dt><dd>${s.dislikes}</dd>
+      <dt>轨迹点</dt><dd>${s.points}</dd>
+    </dl>
+    <button class="btn sm" style="margin-top:12px" onclick="refreshCampuses()">
+      刷新任务表列表</button>`;
+}
+async function refreshCampuses(){
+  const m=await (await fetch('/api/meta')).json();
+  const sel=$('campus'), cur=sel.value;
+  sel.innerHTML=Object.keys(m.campuses).map(c=>`<option>${c}</option>`).join('');
+  if(m.campuses[cur]) sel.value=cur;
+  else if(m.campuses['tasks_else']) sel.value='tasks_else';
+  fillTasks();
+  toast('任务表列表已刷新');
 }
 
 /* ---------------- 上传 ---------------- */

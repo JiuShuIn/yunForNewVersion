@@ -26,6 +26,7 @@ import configparser
 import json
 import os
 import random
+import re
 import shutil
 import sys
 import threading
@@ -37,6 +38,7 @@ from urllib.parse import parse_qs, urlparse
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
+import history
 import main as M
 import yun_route  # noqa: F401  （保留：面板与生成器共用同一套几何函数）
 from yun_http import FakeTransport, SM2Box, YunClient
@@ -61,18 +63,14 @@ SUPPORTED_CAMPUS = "tasks_fch"
 
 
 def list_campuses():
-    """可选的校区目录。
+    """所有可选的校区目录（不再强制过滤）。
 
-    只暴露 tasks_fch：面板的预检夹具、真人化修正与校验口径都是围绕
-    合肥工业大学 fch 打表模式验证的，其他校区的任务表参数（里程/步频/
-    踩点区间）没有实测依据，列出来容易让人误以为同样可用。
-    其他场景请直接用 `python main.py`。
+    只有 tasks_fch（合工大翡翠湖）经过完整实测验证；其余目录同样列出，
+    由界面提示"未验证"，避免用户以为面板不支持而误用命令行。
     """
     out = {}
     for d in sorted(os.listdir(BASE_DIR)):
         if d.startswith("tasks_") and os.path.isdir(os.path.join(BASE_DIR, d)):
-            if d != SUPPORTED_CAMPUS:
-                continue
             files = sorted(f for f in os.listdir(os.path.join(BASE_DIR, d))
                            if f.endswith(".json"))
             if files:
@@ -228,9 +226,6 @@ def _home_fixture(task_path, campus):
 
 def build_preview(campus, task):
     """跑一次完整的离线流程，返回逐步明细。不发任何真实请求。"""
-    if campus != SUPPORTED_CAMPUS:
-        return {"error": "本面板只支持 %s（合工大 fch 打表模式）；"
-                         "其他场景请使用 python main.py" % SUPPORTED_CAMPUS}
     task_path = os.path.join(BASE_DIR, campus, task)
     if not os.path.isfile(task_path):
         return {"error": "任务表不存在：%s/%s" % (campus, task)}
@@ -455,9 +450,6 @@ def _warnings(summary):
 # ------------------------------------------------------------------ 真实上传
 def start_upload(campus, task):
     """按预检计划真实上传。只有预检通过且用户确认后才会走到这里。"""
-    if campus != SUPPORTED_CAMPUS:
-        return {"error": "本面板只支持 %s（合工大 fch 打表模式）；"
-                         "其他场景请使用 python main.py" % SUPPORTED_CAMPUS}
     with STATE["lock"]:
         plan = STATE["plan"]
         if not plan or plan.get("campus") != campus or plan.get("task") != task:
@@ -543,6 +535,84 @@ def _run_upload(campus, task):
         log(traceback.format_exc())
 
 
+# ------------------------------------------------------------------ 历史记录
+def history_terms():
+    """拉取学期列表（只读）。"""
+    M.set_args(CONFIG_PATH)
+    client = M.default_client()
+    obj = client.post_json("/run/listXnYearXqByStudentId", "",
+                           raise_on_business_code=False)
+    if obj.get("code") != 200:
+        return {"error": "获取学期列表失败：%s" % obj.get("msg")}
+    terms = obj.get("data") or []
+    return {"terms": [{"key": t.get("key"), "value": t.get("value"),
+                       "sjd": t.get("sjd")} for t in terms]}
+
+
+def history_runs(table):
+    """拉取某学期的跑步记录列表（只读）。"""
+    if not table or not re.fullmatch(r"[A-Za-z0-9_]+", table):
+        return {"error": "学期表名非法"}
+    M.set_args(CONFIG_PATH)
+    client = M.default_client()
+    obj = client.post_json("/run/crsReocordInfoList",
+                           json.dumps({"tableName": table}),
+                           raise_on_business_code=False)
+    if obj.get("code") != 200:
+        return {"error": "获取记录列表失败：%s" % obj.get("msg")}
+    runs = []
+    for month in (obj.get("data") or {}).get("rank") or []:
+        runs.extend(month.get("rankList") or [])
+    out = []
+    for r in runs:
+        out.append({
+            "id": r.get("id"),
+            "endTime": (r.get("endTime") or "").strip(),
+            "recordMileage": r.get("recordMileage"),
+            "isQualified": r.get("isQualified"),
+            "raName": r.get("raName"),
+        })
+    return {"runs": out}
+
+
+def history_fetch(rec_id, table, out_dir=None):
+    """拉取单条记录详情并保存为任务表文件（只读 + 本地写盘）。
+
+    复用 history.py 的保存逻辑：文件名为 tasklist_N.json，编号续接。
+    """
+    if not rec_id or not table:
+        return {"error": "缺少记录 id 或学期表名"}
+    if not re.fullmatch(r"[A-Za-z0-9_]+", str(table)):
+        return {"error": "学期表名非法"}
+    M.set_args(CONFIG_PATH)
+    client = M.default_client()
+    text = client.post("/run/crsReocordInfo",
+                       json.dumps({"id": rec_id, "tableName": table}))
+    try:
+        detail = json.loads(text)
+    except ValueError:
+        return {"error": "服务端返回的不是 JSON"}
+    if detail.get("code") != 200:
+        return {"error": "获取详情失败：%s" % detail.get("msg")}
+
+    target_dir = out_dir or os.path.join(BASE_DIR, "tasks_else")
+    saved = history.save_history_record(text, target_dir)
+    d = detail.get("data") or {}
+    return {
+        "saved": os.path.relpath(saved, BASE_DIR).replace("\\", "/"),
+        "summary": {
+            "start": d.get("recordStartTime"),
+            "end": d.get("recordEndTime"),
+            "km": d.get("recordMileage"),
+            "pace": d.get("recodePace"),
+            "cadence": d.get("recodeCadence"),
+            "duration": d.get("duration"),
+            "dislikes": d.get("recodeDislikes"),
+            "points": len(d.get("pointsList") or []),
+        },
+    }
+
+
 # ------------------------------------------------------------------ HTTP
 PAGE_PATH = os.path.join(BASE_DIR, "panel_ui.html")
 
@@ -593,6 +663,10 @@ class Handler(BaseHTTPRequestHandler):
                                      else {"campus": campus, "task": task,
                                            "summary": out["summary"]})
                 self._json(out)
+            elif u.path == "/api/history/terms":
+                self._json(history_terms())
+            elif u.path == "/api/history/runs":
+                self._json(history_runs((q.get("table") or [""])[0]))
             elif u.path == "/api/upload/status":
                 with STATE["lock"]:
                     self._json({"progress": dict(STATE["progress"]),
@@ -614,6 +688,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if u.path == "/api/config":
                 self._json({"ok": True, "changed": save_config(body)})
+            elif u.path == "/api/history/fetch":
+                self._json(history_fetch(body.get("id"), body.get("table"),
+                                         body.get("out_dir")))
             elif u.path == "/api/upload":
                 self._json(start_upload(body.get("campus", ""),
                                         body.get("task", "")))
