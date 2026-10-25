@@ -139,6 +139,42 @@ table.req .lab{font-weight:650;color:var(--ink2)}
 table.req .note{display:block;font-size:10.5px;color:var(--hint);margin-top:2px}
 table.req .act{font-family:Consolas,monospace;font-weight:650}
 .hide{display:none!important}
+.okbox{background:linear-gradient(135deg,#f0fbf5,#f7fdfa);border:1px solid #cfe8da;
+  border-radius:12px;padding:18px 20px}
+.oktitle{font-size:16px;font-weight:800;color:#1a7a52;margin-bottom:14px;
+  display:flex;align-items:center;gap:8px}
+.oktitle:before{content:"";width:20px;height:20px;border-radius:50%;background:#2fae7c;
+  display:inline-block;position:relative}
+.okgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px}
+.okgrid div{background:#fff;border:1px solid #e2f0e9;border-radius:9px;padding:10px 12px}
+.okgrid span{display:block;font-size:11px;color:#7c9a8c;margin-bottom:3px}
+.okgrid b{font-size:15px;color:#1a6b4a;font-family:Consolas,monospace}
+.oknote{margin-top:12px;font-size:11.5px;color:#5c8272;line-height:1.7}
+.tip{background:#fbf9f4;border:1px solid #ece2cc;border-radius:11px;padding:14px 16px;
+  font-size:12.5px;color:#7a6335;line-height:1.75;margin-bottom:16px}
+.tip b{color:#8a5a10}
+.tip code{background:#f3ede0;padding:1px 5px;border-radius:4px;color:#6d5326}
+.usergrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:11px}
+.usercard{border:1.5px solid var(--line);border-radius:12px;padding:13px 15px;
+  background:#fbfcfe;cursor:pointer;transition:.15s;position:relative}
+.usercard:hover{border-color:#b9cbec;background:#f6f9ff}
+.usercard.on{border-color:var(--blue);background:#eef4ff;
+  box-shadow:0 0 0 3px rgba(52,101,224,.09)}
+.usercard .un{font-weight:750;font-size:14px;color:#25344d;margin-bottom:4px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.usercard .ud{font-size:11px;color:var(--hint);line-height:1.6}
+.usercard .ud b{color:#5d7ba5;font-weight:650}
+.usercard .del{position:absolute;right:9px;top:9px;font-size:15px;color:#c2cbd9;
+  cursor:pointer;line-height:1;padding:2px 4px;border-radius:5px}
+.usercard .del:hover{background:#fdecee;color:#c0394a}
+.usercard.on .un:after{content:"当前";font-size:9.5px;background:var(--blue);
+  color:#fff;padding:1px 6px;border-radius:5px;margin-left:7px;vertical-align:middle}
+#userFloat{position:fixed;right:22px;top:82px;background:#fff;border:1px solid #dbe6f5;
+  border-radius:12px;padding:10px 14px;box-shadow:0 6px 22px rgba(28,48,88,.09);
+  font-size:12px;z-index:500;display:flex;align-items:center;gap:9px}
+#userFloat .dot{width:8px;height:8px;border-radius:50%;background:#2fae7c;flex:none}
+#userFloat b{color:#25344d;font-weight:750}
+#userFloat small{color:var(--hint);font-size:10.5px}
 .toast{position:fixed;right:24px;bottom:24px;background:#1b2940;color:#fff;padding:11px 17px;
   border-radius:10px;font-size:13px;box-shadow:0 10px 30px rgba(10,20,40,.28);z-index:9999}
 </style>
@@ -149,10 +185,10 @@ table.req .act{font-family:Consolas,monospace;font-weight:650}
     <div class="brand"><div class="mk">◎</div>
       <div><b>云运动工作台</b><span>LOCAL CONSOLE</span></div></div>
     <div class="step on" data-go="1"><span class="n">1</span>配置信息</div>
-    <div class="step" data-go="2"><span class="n">2</span>选择路线</div>
-    <div class="step" data-go="3"><span class="n">3</span>上传预检</div>
-    <div class="step" data-go="4"><span class="n">4</span>执行上传</div>
-    <div class="step" data-go="5"><span class="n">5</span>历史记录</div>
+    <div class="step" data-go="5"><span class="n">2</span>历史记录</div>
+    <div class="step" data-go="2"><span class="n">3</span>选择路线</div>
+    <div class="step" data-go="3"><span class="n">4</span>上传预检</div>
+    <div class="step" data-go="4"><span class="n">5</span>开始上传</div>
     <div class="foot">
       <b>已验证范围</b><br>
       <b>合肥工业大学 fch 打表模式</b>经过完整实测。<br>
@@ -160,6 +196,11 @@ table.req .act{font-family:Consolas,monospace;font-weight:650}
       全部请求经本机代理<br><b>127.0.0.1</b> · 仅本机可访问
     </div>
   </aside>
+
+  <div id="userFloat">
+    <span class="dot"></span>
+    <div><small>当前用户</small><br><b id="floatUser">user</b></div>
+  </div>
 
   <div class="main">
     <div class="top">
@@ -171,7 +212,20 @@ table.req .act{font-family:Consolas,monospace;font-weight:650}
       <!-- ============ 1 配置 ============ -->
       <section class="pane on" id="pane1">
         <h1>配置信息</h1>
-        <p class="sub">读取自 config.ini。敏感字段显示为掩码，未修改则不会写回文件。</p>
+        <p class="sub">每个用户一份独立配置文件（<code>configs/&lt;名字&gt;.ini</code>），互不影响。</p>
+
+        <div class="card">
+          <h2>用户配置 <small>点击卡片切换当前用户</small></h2>
+          <div class="usergrid" id="userGrid"></div>
+          <div style="display:flex;gap:9px;margin-top:14px;align-items:center">
+            <input id="newUserName" placeholder="新用户名称（中英文/数字/_-）"
+                   style="flex:1;max-width:260px;padding:8px 11px;border:1px solid #dbe3ef;
+                          border-radius:9px;font-size:13px">
+            <button class="btn primary" onclick="createUser()">添加用户</button>
+            <span id="userMsg" style="font-size:12.5px;color:var(--muted)"></span>
+          </div>
+        </div>
+
         <div class="warn" style="background:#eef5ff;border-color:#dce9ff;color:#2c4a7c">
           <b>只需填写 [User] 段</b>：<code>token</code>、<code>device_id</code>、
           <code>device_name</code>、<code>sys_edition</code>。<br>
@@ -179,7 +233,8 @@ table.req .act{font-family:Consolas,monospace;font-weight:650}
           <code>[Login]</code>）<b>请保持原样不要改动</b>——改错会直接导致上传失败。
         </div>
         <div class="card">
-          <h2>账号与服务器 <small>token / 密码等敏感项留空或保持掩码即不修改</small></h2>
+          <h2><span id="cfgUserLabel">当前用户：user</span>
+            <small>敏感项留空或保持掩码即不修改</small></h2>
           <div id="cfgForm"></div>
           <div style="margin-top:16px;display:flex;gap:10px;align-items:center">
             <button class="btn primary" onclick="saveCfg()">保存配置</button>
@@ -193,10 +248,11 @@ table.req .act{font-family:Consolas,monospace;font-weight:650}
       <section class="pane" id="pane2">
         <h1>选择路线</h1>
         <p class="sub">打表模式：直接回放一张已有的任务表。地图显示轨迹与打卡点。</p>
-        <div class="warn" style="margin-bottom:16px">
-          <b>已验证：合肥工业大学 fch 校区的打表模式。</b>
-          其他校区（txl / xc）同样可以选，但未经过完整实测，请自行确认任务表参数。
-          合成轨迹、人脸核验等场景请使用 <code>python main.py</code>。
+        <div class="tip">
+          <b>建议优先选 <code>tasks_else</code> 里自己拉取的记录。</b>
+          仓库自带的 <code>tasks_fch</code> 等目录是示例数据；
+          自己拉取的表与你的学校任务、常跑路线更匹配。
+          <br>已验证：合肥工业大学 fch 打表模式。其他校区可选但未验证。
         </div>
         <div class="grid2">
           <div class="card">
@@ -232,6 +288,10 @@ table.req .act{font-family:Consolas,monospace;font-weight:650}
       <section class="pane" id="pane3">
         <h1>上传预检</h1>
         <p class="sub">用本地假传输把整条链路完整跑一遍，逐条列出<b>将要发给服务器的每个请求</b>。此步骤不联网。</p>
+        <div class="warn" style="background:#eef5ff;border-color:#dce9ff;color:#2c4a7c">
+          使用配置：<b id="previewUser">user</b>
+          <span style="color:#6b83a8">（在「配置信息」页切换用户）</span>
+        </div>
         <div id="previewErr"></div>
         <div class="grid2">
           <div class="card">
@@ -255,12 +315,8 @@ table.req .act{font-family:Consolas,monospace;font-weight:650}
               <div id="sumWarn"></div>
             </div>
             <div class="card">
-              <div class="confirm">
-                <input type="checkbox" id="ack" onchange="syncGo()">
-                <label for="ack">我已核对以上请求明细，确认无误，可以上传。</label>
-              </div>
-              <button class="btn go" id="goBtn" style="width:100%" disabled
-                      onclick="startUpload()">开始上传</button>
+              <button class="btn primary" style="width:100%"
+                      onclick="go(4)">下一步：开始上传</button>
             </div>
           </div>
         </div>
@@ -269,7 +325,12 @@ table.req .act{font-family:Consolas,monospace;font-weight:650}
       <!-- ============ 5 历史记录 ============ -->
       <section class="pane" id="pane5">
         <h1>历史记录</h1>
-        <p class="sub">从服务器拉取以前的跑步记录，保存为本地任务表文件（可在「选择路线」里直接回放）。</p>
+        <p class="sub">从服务器拉取以前的跑步记录，保存为本地任务表文件。</p>
+        <div class="tip">
+          <b>建议先拉取一次自己的数据。</b>
+          历史记录里有你真实的轨迹和踩点位置，比仓库自带的示例表更贴合你的学校与常跑路线；
+          拉取后可在「选择路线」里直接选中回放。
+        </div>
         <div class="grid2">
           <div class="card">
             <h2>跑步记录 <small id="histInfo"></small></h2>
@@ -303,15 +364,38 @@ table.req .act{font-family:Consolas,monospace;font-weight:650}
 
       <!-- ============ 4 上传 ============ -->
       <section class="pane" id="pane4">
-        <h1>执行上传</h1>
-        <p class="sub">上传过程中请勿关闭页面。结果会实时回传。</p>
+        <h1>开始上传</h1>
+        <p class="sub">确认无误后开始。上传过程中请勿关闭页面，结果实时回传。</p>
+
+        <div class="card" id="startCard">
+          <h2>上传确认</h2>
+          <div style="font-size:13px;margin-bottom:10px;color:#41506d">
+            将以 <b id="uploadUser">user</b> 的身份上传
+          </div>
+          <div id="preflightBox" style="font-size:13px;color:var(--muted)">
+            尚未完成预检。请先回到「上传预检」页执行一次。
+          </div>
+          <div class="confirm" style="margin-top:14px">
+            <input type="checkbox" id="ack" onchange="syncGo()">
+            <label for="ack">我已核对预检明细，确认无误，现在开始向服务器上传。</label>
+          </div>
+          <button class="btn go" id="goBtn" style="width:100%" disabled
+                  onclick="startUpload()">开始上传</button>
+        </div>
+
+        <div class="card hide" id="resultCard">
+          <h2>上传结果 <span id="progPhase" class="badge idle">未开始</span></h2>
+          <div id="successBox"></div>
+        </div>
+
         <div class="card">
-          <h2>进度 <span id="progPhase" class="badge idle">未开始</span></h2>
+          <h2>进度 <small id="progMeta"></small></h2>
           <div class="bar"><i id="progBar"></i></div>
           <div style="font-size:12.5px;color:var(--muted)" id="progText">等待开始</div>
         </div>
+
         <div class="card">
-          <h2>日志</h2>
+          <h2>实时日志 <small>与终端输出一致</small></h2>
           <div id="log">—</div>
         </div>
       </section>
@@ -328,7 +412,7 @@ function go(n){
   $('pane'+n).classList.add('on');
   document.querySelectorAll('.step').forEach(s=>
     s.classList.toggle('on', s.dataset.go===String(n)));
-  $('crumb').textContent = {1:'配置信息',2:'选择路线',3:'上传预检',4:'执行上传',5:'历史记录'}[n];
+  $('crumb').textContent = {1:'配置信息',2:'选择路线',3:'上传预检',4:'开始上传',5:'历史记录'}[n];
   if(n===2 && MAP) setTimeout(()=>MAP.invalidateSize(),60);
   if(n===5 && !HIST_TERMS.length) loadTerms();
 }
@@ -353,8 +437,65 @@ const LABELS={Yun:{school_host:'学校地址',school_id:'学校 ID',app_edition:
   Login:{username:'账号',password:'密码'}};
 const SEC_TITLE={Yun:'服务器与密钥',User:'账号与设备',Run:'跑步参数',Login:'登录凭据'};
 
+/* ---------------- 用户 ---------------- */
+let USERS=[], CUR_USER='user';
+async function loadUsers(){
+  const j=await (await fetch('/api/users')).json();
+  USERS=j.users||['user'];
+  if(!USERS.includes(CUR_USER)) CUR_USER=USERS[0]||'user';
+  renderUsers();
+  updateUserLabels();
+}
+function renderUsers(){
+  const g=$('userGrid');
+  g.innerHTML=USERS.map(u=>`
+    <div class="usercard ${u===CUR_USER?'on':''}" onclick="switchUser('${u}')">
+      ${u!=='user'?`<span class="del" onclick="event.stopPropagation();delUser('${u}')"
+        title="删除">×</span>`:''}
+      <div class="un">${u}</div>
+      <div class="ud"><b>configs/${u}.ini</b></div>
+    </div>`).join('');
+}
+function updateUserLabels(){
+  $('floatUser').textContent=CUR_USER;
+  $('cfgUserLabel').textContent='当前用户：'+CUR_USER;
+  const pu=$('previewUser'), uu=$('uploadUser');
+  if(pu) pu.textContent=CUR_USER;
+  if(uu) uu.textContent=CUR_USER;
+}
+function switchUser(u){
+  if(u===CUR_USER) return;
+  CUR_USER=u;
+  renderUsers(); updateUserLabels();
+  loadCfg();
+  PREVIEWED=null; syncGo(); updatePreflight();
+  HIST_TERMS=[]; $('histTerm').innerHTML='';
+}
+async function createUser(){
+  const name=($('newUserName').value||'').trim();
+  if(!name){ $('userMsg').textContent='请输入名称'; return; }
+  const r=await fetch('/api/users/create',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+  const j=await r.json();
+  if(j.error){ $('userMsg').textContent=j.error; return; }
+  $('newUserName').value='';
+  $('userMsg').textContent='已创建 '+name;
+  await loadUsers();
+  switchUser(name);
+}
+async function delUser(name){
+  if(!window.confirm('删除用户 '+name+' 的配置文件？此操作不可撤销。')) return;
+  const r=await fetch('/api/users/delete',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+  const j=await r.json();
+  if(j.error){ $('userMsg').textContent=j.error; return; }
+  if(CUR_USER===name) CUR_USER='user';
+  await loadUsers(); loadCfg();
+}
+
 async function loadCfg(){
-  const r=await fetch('/api/config'); const cfg=await r.json();
+  const r=await fetch('/api/config?user='+encodeURIComponent(CUR_USER));
+  const cfg=await r.json();
   if(cfg.error){$('cfgMsg').textContent=cfg.error;return;}
   let html='';
   for(const sec of Object.keys(cfg)){
@@ -379,7 +520,7 @@ async function saveCfg(){
     payload[sec][k]= i.value.trim()===''? '__KEEP__' : i.value;
   });
   const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(payload)});
+    body:JSON.stringify({user:CUR_USER, data:payload})});
   const j=await r.json();
   if(j.error){$('cfgMsg').textContent='保存失败：'+j.error;return;}
   $('cfgMsg').textContent = j.changed.length? ('已更新：'+j.changed.join(', ')) : '没有变化';
@@ -448,11 +589,11 @@ async function doPreview(){
   $('stepList').innerHTML='<div style="color:var(--hint);font-size:13px">预检中…</div>';
   $('previewErr').innerHTML=''; $('sumKv').innerHTML=''; $('sumWarn').innerHTML='';
   $('ack').checked=false; syncGo();
-  const j=await (await fetch(`/api/preview?campus=${campus}&task=${task}`)).json();
+  const j=await (await fetch(`/api/preview?campus=${campus}&task=${task}&user=${encodeURIComponent(CUR_USER)}`)).json();
   if(j.error){
     $('previewErr').innerHTML=`<div class="err">预检失败：${j.error}</div>`;
     $('stepList').innerHTML=renderSteps(j.steps||[]);
-    PREVIEWED=null; syncGo(); return;
+    PREVIEWED=null; updatePreflight(); syncGo(); return;
   }
   PREVIEWED=j;
   $('stepList').innerHTML=renderSteps(j.steps);
@@ -472,6 +613,7 @@ async function doPreview(){
     <dt>客户端版本</dt><dd>${s.app_edition||'—'}</dd>`;
   $('sumWarn').innerHTML=(j.warnings||[]).map(w=>`<div class="warn">${w}</div>`).join('')
     || '<div style="color:var(--green);font-size:12.5px">未发现明显问题</div>';
+  updatePreflight();
   syncGo();
 }
 function renderReq(reqs){
@@ -508,13 +650,29 @@ function renderSteps(steps){
 function syncGo(){
   $('goBtn').disabled = !(PREVIEWED && $('ack').checked);
 }
+function updatePreflight(){
+  const box=$('preflightBox');
+  if(!PREVIEWED){ box.innerHTML='<span style="color:var(--hint)">尚未完成预检。请先回到「上传预检」页执行一次。</span>'; return; }
+  const s=PREVIEWED.summary||{};
+  const warn=(PREVIEWED.warnings||[]).length;
+  box.innerHTML=`
+    <dl class="kv">
+      <dt>任务表</dt><dd>${$('campus').value} / ${$('task').value}</dd>
+      <dt>上报里程</dt><dd>${s.km} km</dd>
+      <dt>平均步频</dt><dd>${s.cadence} spm</dd>
+      <dt>踩点数</dt><dd>${s.dislikes}</dd>
+      <dt>批次数</dt><dd>${s.batches}</dd>
+    </dl>
+    ${warn? `<div class="warn" style="margin-top:12px">预检有 ${warn} 条提示，建议先回看「上传预检」页。</div>`
+           : '<div style="margin-top:10px;color:var(--green);font-size:12px">预检通过，未发现明显问题</div>'}`;
+}
 
 /* ---------------- 历史记录 ---------------- */
 let HIST_TERMS = [];
 async function loadTerms(){
   $('histErr').innerHTML='';
   $('histInfo').textContent='加载中…';
-  const j = await (await fetch('/api/history/terms')).json();
+  const j = await (await fetch('/api/history/terms?user='+encodeURIComponent(CUR_USER))).json();
   if(j.error){ $('histErr').innerHTML=`<div class="err">${j.error}</div>`;
     $('histInfo').textContent=''; return; }
   HIST_TERMS = j.terms || [];
@@ -528,7 +686,7 @@ async function loadRuns(){
   const tb=$('runTable').querySelector('tbody');
   tb.innerHTML='<tr><td colspan="4" style="color:var(--hint)">加载中…</td></tr>';
   $('histErr').innerHTML='';
-  const j = await (await fetch(`/api/history/runs?table=${encodeURIComponent(table)}`)).json();
+  const j = await (await fetch(`/api/history/runs?table=${encodeURIComponent(table)}&user=${encodeURIComponent(CUR_USER)}`)).json();
   if(j.error){ $('histErr').innerHTML=`<div class="err">${j.error}</div>`; tb.innerHTML=''; return; }
   const runs=j.runs||[];
   if(!runs.length){ tb.innerHTML='<tr><td colspan="4" style="color:var(--hint)">本学期没有记录</td></tr>'; return; }
@@ -544,7 +702,7 @@ async function fetchRun(id, table){
   const box=$('histResult');
   box.innerHTML='<span style="color:var(--hint)">正在拉取…</span>';
   const r = await fetch('/api/history/fetch',{method:'POST',
-    headers:{'Content-Type':'application/json'}, body:JSON.stringify({id, table})});
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({id, table, user:CUR_USER})});
   const j = await r.json();
   if(j.error){ box.innerHTML=`<div class="err">${j.error}</div>`; return; }
   const s=j.summary||{};
@@ -578,11 +736,13 @@ let pollTimer=null;
 async function startUpload(){
   const campus=$('campus').value, task=$('task').value;
   const r=await fetch('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({campus,task})});
+    body:JSON.stringify({campus,task,user:CUR_USER})});
   const j=await r.json();
-  if(j.error){toast(j.error);return;}
-  go(4);
-  if(!pollTimer) pollTimer=setInterval(pollStatus,1000);
+  if(j.error){ $('preflightBox').innerHTML=`<div class="err">${j.error}</div>`; return; }
+  $('startCard').classList.add('hide');
+  $('resultCard').classList.remove('hide');
+  $('successBox').innerHTML='';
+  if(!pollTimer) pollTimer=setInterval(pollStatus,800);
   pollStatus();
 }
 async function pollStatus(){
@@ -601,11 +761,28 @@ async function pollStatus(){
   badge.textContent={idle:'未开始',starting:'启动中',running:'上传中',done:'已完成',error:'失败'}[p.phase]||p.phase;
   $('log').textContent=j.log||'—';
   $('log').scrollTop=$('log').scrollHeight;
+  if(p.phase==='done'&&p.summary&&!$('successBox').dataset.done){
+    $('successBox').dataset.done='1';
+    const s=p.summary;
+    $('successBox').innerHTML=`
+      <div class="okbox">
+        <div class="oktitle">上传成功</div>
+        <div class="okgrid">
+          <div><span>总里程</span><b>${s.km} km</b></div>
+          <div><span>配速</span><b>${s.pace} min/km</b></div>
+          <div><span>平均步频</span><b>${s.cadence} spm</b></div>
+          <div><span>踩点数</span><b>${s.dislikes}</b></div>
+          <div><span>时长</span><b>${s.duration} 秒</b></div>
+          <div><span>批次</span><b>${s.batches} 批</b></div>
+        </div>
+        <div class="oknote">服务端已受理结束请求。成绩是否计入以云运动 App 显示为准。</div>
+      </div>`;
+  }
   if(p.phase==='done'||p.phase==='error'){clearInterval(pollTimer);pollTimer=null;}
 }
 
 /* ---------------- 启动 ---------------- */
-loadCfg();
+loadUsers().then(()=>loadCfg());
 initMeta();
 </script>
 </body>

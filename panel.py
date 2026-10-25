@@ -30,6 +30,7 @@ import re
 import shutil
 import sys
 import threading
+import time
 import traceback
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -43,7 +44,9 @@ import main as M
 import yun_route  # noqa: F401  （保留：面板与生成器共用同一套几何函数）
 from yun_http import FakeTransport, SM2Box, YunClient
 
-CONFIG_PATH = os.path.join(BASE_DIR, "config.ini")
+CONFIG_PATH = os.path.join(BASE_DIR, "config.ini")   # 模板（新用户从这里复制）
+CONFIG_DIR = os.path.join(BASE_DIR, "configs")        # 每用户一个 .ini
+DEFAULT_USER = "user"
 MASK = "__MASKED__"
 KEEP = "__KEEP__"
 SENSITIVE_KEYS = {"password", "token", "cipherkey", "cipherkeyencrypted"}
@@ -55,6 +58,39 @@ STATE = {
     "lock": threading.Lock(),
     "progress": {"phase": "idle", "sent": 0, "total": 0, "detail": ""},
 }
+
+
+class _Tee:
+    """把写入同时送到原始流和面板日志。
+
+    main.py 的进度/结果都用 print() 输出，GUI 直接调用 Yun_For_New 时这些
+    内容只进了进程 stdout，前端看不到。这里在**上传线程**内临时接管
+    sys.stdout/sys.stderr，让终端里能看到的东西原样出现在 GUI 日志里。
+    保留原始流写入，命令行启动时行为不变。
+    """
+
+    def __init__(self, original, sink):
+        self._original = original
+        self._sink = sink
+
+    def write(self, text):
+        if text:
+            try:
+                self._original.write(text)
+            except Exception:
+                pass
+            if text.strip():
+                self._sink(text.rstrip(chr(10)))
+        return len(text) if text else 0
+
+    def flush(self):
+        try:
+            self._original.flush()
+        except Exception:
+            pass
+
+    def isatty(self):
+        return False
 
 
 # ------------------------------------------------------------------ 目录扫描
@@ -112,10 +148,79 @@ def _card_points(path):
     return out
 
 
-# ------------------------------------------------------------------ 配置读写
-def read_config():
+# ------------------------------------------------------------------ 多用户配置
+# 每个用户一个 configs/<name>.ini；config.ini 只作模板。
+# 用户之间完全独立（token/设备/账号互不影响），但历史记录任务表是共享的。
+USER_NAME_RE = re.compile(r"^[A-Za-z0-9_\-一-龥]{1,24}$")
+
+
+def _user_path(name):
+    """用户名 -> 配置文件绝对路径。非法名返回 None（防目录穿越）。"""
+    name = (name or "").strip()
+    if not USER_NAME_RE.match(name):
+        return None
+    return os.path.join(CONFIG_DIR, name + ".ini")
+
+
+def list_users():
+    """已存在的用户列表，user 永远排第一。
+
+    首次调用时先把 config.ini 复制成 configs/user.ini，保证至少有一个用户。
+    """
+    _ensure_default_user()
+    names = sorted(os.path.splitext(f)[0] for f in os.listdir(CONFIG_DIR)
+                   if f.endswith(".ini"))
+    if DEFAULT_USER in names:
+        names.remove(DEFAULT_USER)
+        names.insert(0, DEFAULT_USER)
+    return names
+
+
+def _ensure_default_user():
+    """首次运行时把 config.ini 复制成 configs/user.ini。"""
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    path = _user_path(DEFAULT_USER)
+    if not os.path.exists(path) and os.path.exists(CONFIG_PATH):
+        shutil.copyfile(CONFIG_PATH, path)
+    return path
+
+
+def create_user(name):
+    """新建用户：复制模板（或当前 user）为 configs/<name>.ini。"""
+    name = (name or "").strip()
+    path = _user_path(name)
+    if path is None:
+        return {"error": "用户名只能用中英文、数字、下划线或短横线（1~24 字）"}
+    if os.path.exists(path):
+        return {"error": "用户 %s 已存在" % name}
+    src = _ensure_default_user() or CONFIG_PATH
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    shutil.copyfile(src, path)
+    # 新用户清空身份字段，避免误用别人的 token
     cp = configparser.ConfigParser()
-    cp.read(CONFIG_PATH, encoding="utf-8")
+    cp.read(path, encoding="utf-8")
+    if cp.has_section("User"):
+        for k in ("token", "device_id", "device_name", "utc", "uuid", "sign"):
+            cp["User"][k] = ""
+    with open(path, "w", encoding="utf-8") as f:
+        cp.write(f)
+    return {"ok": True, "users": list_users(), "current": name}
+
+
+def delete_user(name):
+    if name == DEFAULT_USER:
+        return {"error": "默认用户 user 不能删除"}
+    path = _user_path(name)
+    if path is None or not os.path.exists(path):
+        return {"error": "用户不存在"}
+    os.remove(path)
+    return {"ok": True, "users": list_users()}
+
+
+def read_config(name=DEFAULT_USER):
+    path = _user_path(name) or _ensure_default_user()
+    cp = configparser.ConfigParser()
+    cp.read(path, encoding="utf-8")
     out = {}
     for sec in cp.sections():
         out[sec] = {k: (MASK if k.lower() in SENSITIVE_KEYS and cp[sec][k]
@@ -123,9 +228,13 @@ def read_config():
     return out
 
 
-def save_config(payload):
+def save_config(payload, name=DEFAULT_USER):
+    path = _user_path(name)
+    if path is None:
+        raise ValueError("用户名非法")
+    _ensure_default_user()
     cp = configparser.ConfigParser()
-    cp.read(CONFIG_PATH, encoding="utf-8")
+    cp.read(path, encoding="utf-8")
     changed = []
     for sec, kv in (payload or {}).items():
         sec = str(sec).strip()
@@ -139,11 +248,16 @@ def save_config(payload):
                 continue
             new = "" if v is None else str(v)
             if cp[sec].get(k) != new:
-                changed.append(f"{sec}.{k}")
+                changed.append("%s.%s" % (sec, k))
             cp[sec][k] = new
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8") as f:
         cp.write(f)
     return changed
+
+
+def config_path_for(name):
+    """上传/预检用：返回该用户的配置文件绝对路径（不存在则建默认）。"""
+    return _user_path(name) or _ensure_default_user()
 
 
 # ------------------------------------------------------------------ 预检引擎
@@ -224,13 +338,13 @@ def _home_fixture(task_path, campus):
     }
 
 
-def build_preview(campus, task):
+def build_preview(campus, task, user=DEFAULT_USER):
     """跑一次完整的离线流程，返回逐步明细。不发任何真实请求。"""
     task_path = os.path.join(BASE_DIR, campus, task)
     if not os.path.isfile(task_path):
         return {"error": "任务表不存在：%s/%s" % (campus, task)}
 
-    M.set_args(CONFIG_PATH)
+    M.set_args(config_path_for(user))
     profile = M.build_profile(M._CONF)
     home = _home_fixture(task_path, campus)
 
@@ -244,18 +358,20 @@ def build_preview(campus, task):
     client = YunClient(profile, base_url=M.my_host, transport=capture,
                        rng=random.Random(20261025), sleep=lambda s: None)
 
-    # 只跑这一张表：复制到独占目录，避免 random_choose 选中别的表
+    # 只跑这一张表：复制到**本次调用独占**的子目录，避免 random_choose
+    # 选中别的表，也避免并发的预检/上传互相删文件。
     os.makedirs(PICK_DIR, exist_ok=True)
-    for old in os.listdir(PICK_DIR):
-        os.remove(os.path.join(PICK_DIR, old))
-    shutil.copyfile(task_path, os.path.join(PICK_DIR, task))
+    pick = os.path.join(PICK_DIR, "preview_%d" % threading.get_ident())
+    shutil.rmtree(pick, ignore_errors=True)
+    os.makedirs(pick, exist_ok=True)
+    shutil.copyfile(task_path, os.path.join(pick, task))
 
     result = {"campus": campus, "task": task, "synthetic_home": True,
               "warnings": [], "steps": [], "summary": {}}
     try:
         yun = M.Yun_For_New(client=client, home_info=home)
         yun.start()
-        yun.do_by_points_map(path=PICK_DIR, random_choose=True)
+        yun.do_by_points_map(path=pick, random_choose=True)
         yun.finish_by_points_map()
     except Exception as exc:
         result["error"] = "%s: %s" % (type(exc).__name__, exc)
@@ -448,7 +564,7 @@ def _warnings(summary):
 
 
 # ------------------------------------------------------------------ 真实上传
-def start_upload(campus, task):
+def start_upload(campus, task, user=DEFAULT_USER):
     """按预检计划真实上传。只有预检通过且用户确认后才会走到这里。"""
     with STATE["lock"]:
         plan = STATE["plan"]
@@ -460,29 +576,39 @@ def start_upload(campus, task):
         STATE["progress"] = {"phase": "starting", "sent": 0,
                              "total": plan["summary"].get("batches", 0),
                              "detail": "启动中"}
-    threading.Thread(target=_run_upload, args=(campus, task), daemon=True).start()
+    threading.Thread(target=_run_upload, args=(campus, task, user), daemon=True).start()
     return {"ok": True}
 
 
-def _run_upload(campus, task):
+def _run_upload(campus, task, user=DEFAULT_USER):
     task_path = os.path.join(BASE_DIR, campus, task)
-    os.makedirs(PICK_DIR, exist_ok=True)
-    for old in os.listdir(PICK_DIR):
-        os.remove(os.path.join(PICK_DIR, old))
-    shutil.copyfile(task_path, os.path.join(PICK_DIR, task))
+    # 每个上传用独立子目录：预检与上传可能并发，共用一个目录会互相删文件。
+    pick = os.path.join(PICK_DIR, "%s_%d" % (
+        os.path.splitext(task)[0], threading.get_ident()))
+    shutil.rmtree(pick, ignore_errors=True)
+    os.makedirs(pick, exist_ok=True)
+    shutil.copyfile(task_path, os.path.join(pick, task))
 
     def log(s):
         with STATE["lock"]:
             STATE["log"].append(s if s.endswith("\n") else s + "\n")
 
+    # 接管本线程的 stdout/stderr：main.py 的 print 内容同步进 GUI 日志。
+    _old_out, _old_err = sys.stdout, sys.stderr
+    sys.stdout = _Tee(_old_out, log)
+    sys.stderr = _Tee(_old_err, log)
     try:
-        M.set_args(CONFIG_PATH)
+        M.set_args(config_path_for(user))
         client = M.default_client()
         real_post = client.post_json
-        counter = {"n": 0}
+        counter = {"n": 0, "t0": time.time()}
 
         def counted(router, *a, **kw):
+            t0 = time.time()
             obj = real_post(router, *a, **kw)
+            cost = int((time.time() - t0) * 1000)
+            code = (obj or {}).get("code")
+            name = router.rsplit("/", 1)[-1]
             if router.endswith("/run/splitPointCheating"):
                 counter["n"] += 1
                 # 点数优先：raw_bytes 是 gzip 后的 split 体，解出来数 cardPointList。
@@ -502,6 +628,11 @@ def _run_upload(campus, task):
                         pr["sent"] = pr.get("sent", 0) + n_pts
                     pr["detail"] = "已上传 %d 批 / %d 点" % (
                         counter["n"], pr.get("sent", 0))
+                log("[%s] 第 %d 批 %d 点 · %dms · code=%s"
+                    % (time.strftime("%H:%M:%S"), counter["n"], n_pts, cost, code))
+            else:
+                log("[%s] %s · %dms · code=%s"
+                    % (time.strftime("%H:%M:%S"), name, cost, code))
             return obj
 
         client.post_json = counted
@@ -514,7 +645,7 @@ def _run_upload(campus, task):
         # 真实批量由服务端下发的 passPointNum 决定，可能与预检假设不同。
         # 因此进度以"点数"为准，批次只做展示：分母用实际会上报的点数。
         total_pts = yun._effective_point_count(
-            json.load(open(os.path.join(PICK_DIR, task), encoding="utf-8"))["data"]["pointsList"])
+            json.load(open(os.path.join(pick, task), encoding="utf-8"))["data"]["pointsList"])
         with STATE["lock"]:
             STATE["progress"]["total"] = total_pts
             STATE["progress"]["batch_size"] = yun.upload_batch_size
@@ -522,23 +653,41 @@ def _run_upload(campus, task):
             STATE["progress"]["detail"] = "共 %d 点，每批 %d 点" % (total_pts, yun.upload_batch_size)
         log("批量=%d 点/批，共 %d 点（服务端 passPointNum 决定）"
             % (yun.upload_batch_size, total_pts))
-        yun.do_by_points_map(path=PICK_DIR, random_choose=True)
+        yun.do_by_points_map(path=pick, random_choose=True)
         yun.finish_by_points_map()
+        d = yun.task_map.get("data") or {}
+        log("=" * 52)
+        log("[OK] 上传成功  总耗时 %.1fs" % (time.time() - counter["t0"]))
+        log("  总里程    %s km" % d.get("recordMileage"))
+        log("  配速      %.2f min/km" % float(d.get("recodePace") or 0))
+        log("  平均步频  %d spm" % round(float(d.get("recodeCadence") or 0)))
+        log("  踩点数    %s" % d.get("recodeDislikes"))
+        log("  时长      %s 秒" % d.get("duration"))
+        log("  批次      %d 批" % counter["n"])
+        log("=" * 52)
         with STATE["lock"]:
-            STATE["progress"].update(phase="done", detail="上传完成")
-        log("上传完成")
+            STATE["progress"].update(
+                phase="done", detail="上传成功",
+                summary={"km": d.get("recordMileage"),
+                         "pace": round(float(d.get("recodePace") or 0), 2),
+                         "cadence": round(float(d.get("recodeCadence") or 0)),
+                         "dislikes": d.get("recodeDislikes"),
+                         "duration": d.get("duration"),
+                         "batches": counter["n"]})
     except Exception as exc:
         with STATE["lock"]:
             STATE["progress"].update(phase="error",
                                      detail="%s: %s" % (type(exc).__name__, exc))
-        log("失败：%s: %s" % (type(exc).__name__, exc))
+        log("[FAIL] 上传失败：%s: %s" % (type(exc).__name__, exc))
         log(traceback.format_exc())
+    finally:
+        sys.stdout, sys.stderr = _old_out, _old_err
 
 
 # ------------------------------------------------------------------ 历史记录
-def history_terms():
+def history_terms(user=DEFAULT_USER):
     """拉取学期列表（只读）。"""
-    M.set_args(CONFIG_PATH)
+    M.set_args(config_path_for(user))
     client = M.default_client()
     obj = client.post_json("/run/listXnYearXqByStudentId", "",
                            raise_on_business_code=False)
@@ -549,11 +698,11 @@ def history_terms():
                        "sjd": t.get("sjd")} for t in terms]}
 
 
-def history_runs(table):
+def history_runs(table, user=DEFAULT_USER):
     """拉取某学期的跑步记录列表（只读）。"""
     if not table or not re.fullmatch(r"[A-Za-z0-9_]+", table):
         return {"error": "学期表名非法"}
-    M.set_args(CONFIG_PATH)
+    M.set_args(config_path_for(user))
     client = M.default_client()
     obj = client.post_json("/run/crsReocordInfoList",
                            json.dumps({"tableName": table}),
@@ -575,7 +724,7 @@ def history_runs(table):
     return {"runs": out}
 
 
-def history_fetch(rec_id, table, out_dir=None):
+def history_fetch(rec_id, table, out_dir=None, user=DEFAULT_USER):
     """拉取单条记录详情并保存为任务表文件（只读 + 本地写盘）。
 
     复用 history.py 的保存逻辑：文件名为 tasklist_N.json，编号续接。
@@ -584,7 +733,7 @@ def history_fetch(rec_id, table, out_dir=None):
         return {"error": "缺少记录 id 或学期表名"}
     if not re.fullmatch(r"[A-Za-z0-9_]+", str(table)):
         return {"error": "学期表名非法"}
-    M.set_args(CONFIG_PATH)
+    M.set_args(config_path_for(user))
     client = M.default_client()
     text = client.post("/run/crsReocordInfo",
                        json.dumps({"id": rec_id, "tableName": table}))
@@ -642,8 +791,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"campuses": list_campuses(),
                             "max_mileage_km": _cap_km(),
                             "supported_campus": SUPPORTED_CAMPUS})
+            elif u.path == "/api/users":
+                self._json({"users": list_users(), "current": DEFAULT_USER})
             elif u.path == "/api/config":
-                self._json(read_config())
+                self._json(read_config((q.get("user") or [DEFAULT_USER])[0]))
             elif u.path == "/api/track":
                 campus = (q.get("campus") or [""])[0]
                 task = (q.get("task") or [""])[0]
@@ -657,16 +808,18 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == "/api/preview":
                 campus = (q.get("campus") or [""])[0]
                 task = (q.get("task") or [""])[0]
-                out = build_preview(campus, task)
+                out = build_preview(campus, task,
+                                    (q.get("user") or [DEFAULT_USER])[0])
                 with STATE["lock"]:
                     STATE["plan"] = (None if out.get("error")
                                      else {"campus": campus, "task": task,
                                            "summary": out["summary"]})
                 self._json(out)
             elif u.path == "/api/history/terms":
-                self._json(history_terms())
+                self._json(history_terms((q.get("user") or [DEFAULT_USER])[0]))
             elif u.path == "/api/history/runs":
-                self._json(history_runs((q.get("table") or [""])[0]))
+                self._json(history_runs((q.get("table") or [""])[0],
+                                        (q.get("user") or [DEFAULT_USER])[0]))
             elif u.path == "/api/upload/status":
                 with STATE["lock"]:
                     self._json({"progress": dict(STATE["progress"]),
@@ -687,13 +840,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             if u.path == "/api/config":
-                self._json({"ok": True, "changed": save_config(body)})
+                self._json({"ok": True,
+                            "changed": save_config(body.get("data") or {},
+                                                   body.get("user") or DEFAULT_USER)})
+            elif u.path == "/api/users/create":
+                self._json(create_user(body.get("name")))
+            elif u.path == "/api/users/delete":
+                self._json(delete_user(body.get("name")))
             elif u.path == "/api/history/fetch":
                 self._json(history_fetch(body.get("id"), body.get("table"),
-                                         body.get("out_dir")))
+                                         body.get("out_dir"),
+                                         body.get("user") or DEFAULT_USER))
             elif u.path == "/api/upload":
                 self._json(start_upload(body.get("campus", ""),
-                                        body.get("task", "")))
+                                        body.get("task", ""),
+                                        body.get("user") or DEFAULT_USER))
             else:
                 self._send(404, "text/plain", "not found")
         except Exception as exc:

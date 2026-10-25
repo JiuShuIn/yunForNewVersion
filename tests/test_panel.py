@@ -24,6 +24,14 @@ CFG = os.path.join("tests", "fixtures", "test_config.ini")
 def _use_test_config(monkeypatch):
     """面板默认读项目根 config.ini（含真实凭据），测试一律指向夹具配置。"""
     monkeypatch.setattr(panel, "CONFIG_PATH", CFG)
+    # 多用户配置：测试用独立的 configs 目录，并把夹具复制成 user.ini
+    import shutil as _sh
+    cdir = tmp_path_factory_dir = os.path.join(
+        os.path.dirname(panel.BASE_DIR), "work_dir", "panel_cfg_test")
+    _sh.rmtree(cdir, ignore_errors=True)
+    os.makedirs(cdir, exist_ok=True)
+    _sh.copyfile(CFG, os.path.join(cdir, "user.ini"))
+    monkeypatch.setattr(panel, "CONFIG_DIR", cdir)
     monkeypatch.setattr(panel, "PICK_DIR",
                         os.path.join(os.path.dirname(panel.BASE_DIR), "work_dir", "panel_pick_test"))
     panel.STATE["plan"] = None
@@ -31,6 +39,7 @@ def _use_test_config(monkeypatch):
     panel.STATE["progress"] = {"phase": "idle", "sent": 0, "total": 0, "detail": ""}
     yield
     panel.STATE["plan"] = None
+    _sh.rmtree(cdir, ignore_errors=True)
 
 
 # ------------------------------------------------------------- 预检不联网
@@ -219,12 +228,12 @@ def test_preview_respects_local_cap():
 
 # --------------------------------------------------- 学校要求对照（预检右侧）
 def _school_cfg(tmp_path, monkeypatch, min_dislikes=3):
-    """写一份带学校要求的配置，供 build_preview（内部会 set_args）读取。"""
+    """写一份带学校要求的用户配置，供 build_preview（内部会 set_args）读取。"""
     src = open(CFG, encoding="utf-8").read()
     src = src.replace("min_dislikes = 0", "min_dislikes = %d" % min_dislikes)
-    p = tmp_path / "school.ini"
-    p.write_text(src, encoding="utf-8")
-    monkeypatch.setattr(panel, "CONFIG_PATH", str(p))
+    p = os.path.join(panel.CONFIG_DIR, "user.ini")
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(src)
 
 
 def test_requirements_include_school_min_dislikes(tmp_path, monkeypatch):
@@ -337,3 +346,64 @@ def test_history_endpoints_registered():
     src = inspect.getsource(panel.Handler)
     for path in ("/api/history/terms", "/api/history/runs", "/api/history/fetch"):
         assert path in src
+
+
+# ------------------------------------------------------------- 多用户配置
+def test_default_user_is_created_from_template():
+    assert "user" in panel.list_users()
+    assert os.path.exists(os.path.join(panel.CONFIG_DIR, "user.ini"))
+
+
+def test_create_and_delete_user():
+    r = panel.create_user("alice")
+    assert r.get("ok"), r
+    assert "alice" in panel.list_users()
+    assert os.path.exists(os.path.join(panel.CONFIG_DIR, "alice.ini"))
+
+    # 新用户身份字段必须清空，避免误用别人的 token
+    cfg = panel.read_config("alice")
+    assert cfg["User"]["token"] in ("", panel.MASK)
+
+    assert panel.delete_user("alice").get("ok")
+    assert "alice" not in panel.list_users()
+
+
+def test_default_user_cannot_be_deleted():
+    assert "error" in panel.delete_user("user")
+
+
+def test_user_name_rejects_path_traversal():
+    for bad in ("../etc/passwd", "a/b", "", "x" * 40):
+        assert "error" in panel.create_user(bad)
+
+
+def test_users_are_independent():
+    panel.create_user("bob")
+    try:
+        panel.save_config({"Run": {"max_mileage_km": "5.0"}}, "bob")
+        assert panel.read_config("bob")["Run"]["max_mileage_km"] == "5.0"
+        # user 不受影响
+        assert panel.read_config("user")["Run"]["max_mileage_km"] != "5.0"
+    finally:
+        panel.delete_user("bob")
+
+
+def test_sensitive_values_masked_per_user():
+    panel.create_user("carol")
+    try:
+        panel.save_config({"User": {"token": "SECRET123"}}, "carol")
+        assert panel.read_config("carol")["User"]["token"] == panel.MASK
+        # 落盘的是明文
+        raw = open(os.path.join(panel.CONFIG_DIR, "carol.ini"), encoding="utf-8").read()
+        assert "SECRET123" in raw
+    finally:
+        panel.delete_user("carol")
+
+
+def test_history_task_tables_are_shared_across_users():
+    """历史记录任务表不绑定用户：所有用户共用 tasks_else。"""
+    import inspect
+    src = inspect.getsource(panel.history_fetch)
+    assert "tasks_else" in src
+    # 保存路径不包含用户名
+    assert "user" not in src.split("target_dir")[1].split("save_history_record")[0]
