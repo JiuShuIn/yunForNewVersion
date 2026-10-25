@@ -29,7 +29,7 @@ PW, PH = 400, 400
 def home_fixture(run_face="Y"):
     return {"code": 200, "msg": "fixture", "data": {"cralist": [{
         "id": 900001, "schoolId": "100", "raType": "T1", "raRunArea": "A",
-        "raDislikes": 1, "raSingleMileageMin": 6.0, "raSingleMileageMax": 7.0,
+        "raDislikes": 1, "raSingleMileageMin": 1.0, "raSingleMileageMax": 7.0,
         "raCadenceMin": 120, "raCadenceMax": 190, "runFaceStatus": run_face,
         "points": "117.2,31.7|117.3,31.8",
     }]}}
@@ -118,6 +118,11 @@ class StubClient:
 
 def make_yun(client, face_runner=None, home=None):
     M.set_args(CFG)
+    # 这些用例测的是流程分支（拒绝/窗口/结束链），不是里程截断。
+    # 夹具配置里的 max_mileage_km 会把 4.8km 的表截短，改变批次数与
+    # _last_confirmed_mileage_m，因此显式关掉本地上限。
+    M.max_mileage_km = 0.0
+    M.min_dislikes = 0          # 同理：学校最低踩点数属于环境配置，不参与流程分支测试
     return M.Yun_For_New(auto_generate_task=False, client=client,
                          home_info=home or home_fixture(),
                          face_runner=face_runner)

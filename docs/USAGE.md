@@ -1,190 +1,406 @@
-# 使用文档
+# 使用指南
 
-本文档描述当前 develop 分支的实际行为（人脸管线与线上字段对齐均已并入）。
-项目框架与协议取证见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+本文档描述当前分支（`feat/full`）的实际行为。协议取证与模块分层见
+[ARCHITECTURE.md](ARCHITECTURE.md)，轨迹合成算法见
+[ROUTE_GENERATION.md](ROUTE_GENERATION.md)。
 
-> 验收边界：本项目所有自动化验证均为**离线**（产物名 `offline_client_compatibility`），
-> 只证明"构造的包与 3.6.6 反编译证据一致"，**不证明服务器接受、不证明能过人脸、
-> 不承诺任何成功率**。服务端接受性需要真实账号线上验证，当前未验证。
+> **验收边界**：本项目所有自动化验证均为**离线**（产物名
+> `offline_client_compatibility`），只证明"构造的包与 3.6.6 反编译证据一致"，
+> **不证明服务器接受、不证明能过人脸、不承诺任何成功率**。
 
-## 1. 环境准备
+---
 
-- Python 3.9+（开发验证于 3.11，仓库自带 `.venv` 不入库）
-- 安装依赖：
+## 目录
+
+1. [快速开始](#1-快速开始)
+2. [图形界面（推荐）](#2-图形界面推荐)
+3. [命令行](#3-命令行)
+4. [配置 `config.ini`](#4-配置-configini)
+5. [打表模式详解](#5-打表模式详解)
+6. [轨迹合成模式](#6-轨迹合成模式)
+7. [人脸核验任务](#7-人脸核验任务)
+8. [离线演练](#8-离线演练)
+9. [常见异常与处置](#9-常见异常与处置)
+10. [安全与合规](#10-安全与合规)
+
+---
+
+## 1. 快速开始
 
 ```bash
 python -m venv .venv
-.venv/Scripts/activate          # Windows；Linux/macOS 用 source .venv/bin/activate
-pip install -r requirements.txt # 必装：requests、gmssl==3.2.2、pillow、tqdm、pycryptodome 等
-pip install opencv-python       # 可选：仅当使用 --face-video 视频源时需要
+.venv\Scripts\activate            # Windows；Linux/macOS 用 source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-- 网络代理：脚本走系统环境变量（`HTTP_PROXY`/`HTTPS_PROXY`），无特殊处理。
-- gmssl 固定 3.2.2（3.2.1 缺少 `mode/asn1` 参数，加密布局不同，不可替换）。
+依赖：`requests`、`gmssl==3.2.2`（版本必须固定）、`pillow`、`tqdm`、`pycryptodome`。
+可选：`opencv-python`（仅视频人脸源需要）。
 
-## 2. 配置 `config.ini`
+**第一次用建议走图形界面**，它会一步步把要发的东西摊开给你看：
 
-用 `-f 路径` 可指定其他配置文件。所有字段含义：
+```bash
+python panel.py
+```
 
-### `[User]` —— 身份（登录后由脚本自动写回，也可手工填写）
+浏览器自动打开 `http://127.0.0.1:8765/`。
+
+---
+
+## 2. 图形界面
+
+`panel.py` 是本地单页工作台，替代了旧的 `web.py`。
+
+> ### ⚠️ 适用范围
+>
+> **本面板只针对「合肥工业大学 fch 校区 + 打表模式」做过完整验证与优化。**
+>
+> 面板的预检夹具、真人化修正、里程/步频/踩点校验口径，全部是围绕 fch 的
+> 9 张任务表实测确定的。其他校区的任务表虽然格式相同，但区间参数没有实测依据。
+>
+> 因此面板**只暴露 `tasks_fch`**；后端也会拒绝其他校区。
+>
+> **以下场景请直接使用 `python main.py`：**
+> - 轨迹合成模式（`--route-config`）
+> - 人脸核验任务（`--face-photo` / `--face-video`）
+> - 其他校区（`tasks_txl` / `tasks_xc` / `tasks_else`）
+> - 需要登录、抓包、历史记录等工具
+
+四个步骤对应左侧导航：
+
+### 2.1 配置信息
+
+读取 `config.ini` 并按分组展示（服务器与密钥 / 账号与设备 / 跑步参数 / 登录凭据）。
+
+- **敏感字段**（`token`、`password`、`cipherkey`、`cipherkeyencrypted`）显示为掩码，
+  **留空即不修改**，不会被掩码字符串覆盖。
+- 保存后只把真正变化的键写回文件，并在界面上列出改动项。
+- 配置文件无注释，重写无损。
+
+### 2.2 选择路线
+
+选择任务表，右侧地图叠加显示：
+
+- 蓝色折线：轨迹
+- 绿色圆点：已踩点（`marked=Y`）
+- 橙色圆点：未踩点
+
+**底图用高德瓦片，与轨迹同为 GCJ-02 坐标系。** 任务表里的坐标本身就是 GCJ-02
+（高德坐标系），两者不做任何转换即可对齐。如果换成 OpenStreetMap 等 WGS-84
+底图，整条轨迹会偏移约 **500~600 米**——这是两个坐标系之间的固有偏差，不是 bug。
+
+**内网/断网环境地图会空白，但不影响选表与预检**——轨迹数据仍会加载，只是没有底图。
+
+### 2.3 上传预检（关键步骤）
+
+点击「下一步：预检」后，面板用**假传输**把整条链路完整跑一遍：
+
+```
+getHomeRunInfo → start → splitPointCheating × N → isStandard → 尾批 → finish
+```
+
+**此步骤完全不联网。** 结果分两块：
+
+**请求明细**：逐个列出每个将要发出的请求，点开可看到完整请求体 JSON。
+每个 split 包标注点数、本包里程、平均步频、步幅、配速。
+
+**汇总**：批次数、上报点数、总里程、平均步频、批内步频范围、配速、踩点数、
+耗时、系统版本、客户端版本。步频合规性用绿/红徽章标出。
+
+**学校要求对照**（右侧上方）逐项列出学校要求与本次实际提交值：
+
+| 项目 | 要求 | 本次提交 | |
+|---|---|---|---|
+| 总里程 | ≤ 2.00 km | 2.00 km | 满足 |
+| 平均步频 | 40 ~ 300 spm | 163 spm | 满足 |
+| 踩点数 | ≥ 3 个 | 2 / 5 个 | 不满足 |
+| 配速 | 任务区间内 | 5.62 min/km | — |
+
+踩点不足会在 `start` 之前就失败，此时没有任何请求体可展示，
+但对照表仍会给出差距，方便判断换哪张表。
+
+**校验结论**会列出需要注意的问题，例如步频越界、里程过低、踩点数不足。
+
+> **重要**：预检用的任务参数（里程区间、踩点要求等）是**由任务表反推**的，
+> 不是服务端真实下发的。真实下发值只有真跑时才知道，所以预检通过 ≠ 服务端一定接受。
+
+### 2.4 执行上传
+
+必须先勾选「我已核对以上请求明细，确认无误」，按钮才会解锁。
+
+上传过程中：
+
+- 进度条按已发送批次实时推进
+- 日志区滚动显示每一步结果
+- 状态徽章：未开始 / 启动中 / 上传中 / 已完成 / 失败
+
+**服务端进程持有发送计划**，前端无法凭任意参数调起上传——必须先预检、
+且预检的校区+任务表必须与请求一致。这保证"地图上看到的就是发出去的"。
+
+---
+
+## 3. 命令行
+
+**图形界面只覆盖 fch 打表模式；除此之外的所有功能都通过命令行完成。**
+
+图形界面不是必需的，所有功能都能在命令行完成。
+
+```bash
+python main.py                              # 交互式
+python main.py -a -t tasks_fch              # 打表全自动（推荐自动化用）
+python main.py -f cfg.ini -a -t tasks_fch   # 指定配置文件
+python main.py --route-config examples/routes/deform_xc.json   # 合成轨迹
+python main.py --dry-run                    # 离线演练
+```
+
+| 参数 | 说明 |
+|---|---|
+| `-f, --config_path` | 配置文件路径（缺省项目根 `config.ini`） |
+| `-t, --task_path` | 任务表目录（缺省 `tasks_fch`） |
+| `-a, --auto_run` | 全自动，不询问确认 |
+| `-d, --drift` | 老式漂移（**已弃用**，仅 0.1mm 刚性平移） |
+| `--route-config` | 合成轨迹配置，不能与 `-t`/`-d` 混用 |
+| `--dry-run` | 离线演练，零网络 |
+| `--face-photo` / `--face-video` | 人脸源 |
+| `--face-detection` | 人脸检测标注 JSON |
+
+**路径契约**：显式传入的相对路径按**调用时的工作目录**解析；
+未显式传入的缺省资源按**项目根目录**解析。
+
+---
+
+## 4. 配置 `config.ini`
+
+### 4.1 `[Yun]` — 服务器与密钥
 
 | 键 | 说明 |
 |---|---|
-| `token` | 登录令牌。留空时 `main.py` 会询问是否账号密码登录（`tools/Login.py`） |
-| `device_id` | 请求头 deviceId。真机取值为 android_id 的 SHA-256（64 位小写 hex）；Login 未配置时生成 16 位随机数——建议手工填成 64 位 hex 更接近真机 |
-| `device_name` | 请求头 deviceName / finish 体 deviceName。**真机格式为 `厂商(型号)`**，如 `Xiaomi(M2011K2C)`（RetrofitService.java:67） |
-| `sys_edition` | 系统版本名裸值，如 `14`（请求头 `sysVersion` 用它；finish 体 `sysEdition` 会自动加 `Android_` 前缀，见 §6） |
-| `sys_version` | 可选，优先于 `sys_edition` 用于 `sysVersion` 头 |
-| `uuid` | 仅在 `[User] legacy_uuid = true` 时作为固定 uuid 使用；默认不启用 |
-| `legacy_uuid` | 兼容开关：`true` 时沿用配置固定 uuid（旧脚本路线）；默认（不配置）每请求随机大写 UUID，与 3.6.6 APK 一致 |
-| `map_key` / `utc` / `sign` | 旧路线遗留字段，常规流程不再需要 |
-
-### `[Yun]` —— 主机与密钥
-
-| 键 | 说明 |
-|---|---|
-| `yun_host` / `school_host` | 接口基址；登录流程会自动探测并写回 `school_host` |
-| `PublicKey` / `PrivateKey` | SM2 密钥对（base64）。仓库默认值是公开示例且**公私不配对**（"3.4.7 私钥失效"），生产加密只需要公钥，不受影响；私钥仅离线工具（FakeTransport 解信封）需要配对值 |
-| `cipherkey` / `cipherkeyencrypted` | 登录/学校目录旧路线的固定 SM4 key 与其 SM2 密文；主接口默认每请求随机 SM4 key |
-| `md5key` | sign 计算用的 appsecret |
+| `school_host` | 学校服务端地址。**会变**，务必用 `python tools/getUrl_Id.py` 查询后写入，不要手工猜端口 |
+| `school_id` | 学校 ID |
+| `school_login_url` | 登录路径，如 `appLoginHGD` |
+| `app_edition` | 客户端版本，应与当前 APK 一致（基线 `3.6.6`）。偏低会触发 `code=500` |
 | `platform` | 固定 `android` |
-| `app_edition` | 请求头 version，按当前 APK 版本填写（分析基线为 `3.6.6`，仓库示例值可能偏旧） |
-| `school_login_url` / `school_id` / `school_name` | 学校目录/登录探测参数 |
+| `md5key` | sign 计算用的 appsecret |
+| `publickey` / `privatekey` | SM2 密钥对。仓库默认值**公私不配对**，生产加密只需要公钥 |
+| `cipherkey` / `cipherkeyencrypted` | 登录/学校目录旧路线的固定 SM4 key 与其密文 |
 
-### `[Run]` —— 跑步行为
+### 4.2 `[User]` — 账号与设备
 
-`min_distance`、`allow_overflow_distance`、`split_count`（每组 splitPoint 的点数）、
-`single_mileage_min/max_offset`、`cadence_min/max_offset`、`strides`（步幅，米）、
-`min_consume/max_consume`（自动生成任务时的配速区间）等，均有注释示例。
+| 键 | 说明 |
+|---|---|
+| `token` | 登录令牌。留空时会询问账号密码登录 |
+| `device_id` | 请求头 `deviceId`。真机是 android_id 的 SHA-256（64 位小写 hex） |
+| `device_name` | 格式为 `厂商(型号)`，如 `Xiaomi(M2011K2C)` |
+| `sys_edition` | 系统版本裸值，如 `15`。finish 体的 `sysEdition` 会自动加 `Android_` 前缀 |
+| `sys_version` | 可选，优先于 `sys_edition` 用于 `sysVersion` 头 |
+| `legacy_uuid` | 设为 `true` 时沿用配置固定 uuid（旧路线）；默认每请求随机 |
 
-## 3. 运行
+### 4.3 `[Run]` — 跑步参数
 
-```bash
-python main.py                 # 交互式：选配置→(可选)登录→选任务表→执行
-python main.py -f cfg.ini -t tasks_xc -a          # 指定配置/任务目录，全自动
-python main.py -d              # 轨迹漂移（tools/drift.py）
+| 键 | 说明 |
+|---|---|
+| `split_count` | 每批上传的点数 |
+| `single_mileage_min/max_offset` | 里程区间的**收紧量**（加到学校下发值上） |
+| `cadence_min/max_offset` | 步频区间的**收紧量** |
+| `strides` | 步幅（米），仅在任务表无步数时用于派生 |
+| `min_distance` | 自动打表模式的目标里程 |
+| `max_mileage_km` | **本地里程硬上限**（公里）。0 = 不限制。见下 |
+| `min_dislikes` | **学校要求的最少踩点数**。与任务下发值取大。0 = 只按任务下发值 |
+
+> ⚠️ **四项 offset 默认应为 0。** 它们是用来**收紧**学校下发区间的，
+> 非 0 会让本来合法的数据被判越界。历史配置里的 `0.5 / -0.5 / 30 / -150`
+> 会把典型的 120~190 步频区间收缩成 `[150, 40]`（空区间），**任何数据都会被拒**。
+
+`exclude_points` 是历史遗留键，**代码中无消费点**，改它没有效果。
+
+#### `min_dislikes` — 学校要求的最少踩点数
+
+合工大要求「踩点数至少 3 个」时设为 `3`。实际判据是
+`max(任务下发 raDislikes, min_dislikes)`——学校要求更严就按学校要求，
+服务端下发的更多就按服务端。
+
+`start` 前会校验任务表 `manageList` 中 `marked=Y` 的数量，不足直接报错，
+不会发一条注定不合格的记录。预检界面右侧的「学校要求对照」会逐项列出
+要求值与本次实际值。
+
+#### `max_mileage_km` — 本地里程硬上限
+
+学校规定"一次只能跑 2km"时设为 `2.0`。生效方式：
+
+- 取**本地值与学校下发 `raSingleMileageMax` 的较小者**作为实际上限
+  （`distance_cap_m`）
+- 跑到上限时在最后一段线路上**精确截断**（按比例插值出终点坐标），
+  末点里程恰好等于上限
+- 随即**跳出循环并进入结束链**：`isStandard → 尾批 → finish`，
+  即告诉服务器"跑完了"
+- 启动时会打印一行确认，例如：
+  `[里程上限] 本地硬上限 2.000 km 小于学校下发 3.000 km，按本地上限截断`
+
+图形界面的预检也遵循同一上限，汇总里会显示「里程上限」并标注「本地限制」。
+
+> 注意：截断后如果任务表在截断范围内踩点不足，`start` 前的校验会直接拒绝
+> （`任务表只标记了 N 个踩点`）。这是有意的——宁可提前报错，也不发一条
+> 注定判不合格的记录。
+
+---
+
+## 5. 打表模式详解
+
+打表模式直接回放一张已有的任务表（`tasks_*/tasklist_*.json`），
+是目前**最稳定、最推荐**的使用方式。
+
+### 5.1 完整链路
+
+```
+getHomeRunInfo → 校验 → start → splitPointCheating × N → isStandard → 尾批 → finish
 ```
 
-- 旧版 `EasyAutoRunServer`（`tools/EasyAutoRunServer/run.sh`）与
-  `python history.py`（拉历史记录，见 `history.md`）保持可用。
-- **路径契约**：显式传入的相对路径（`-f/-t/--face-*` 等）按**调用时的工作目录**
-  解析；未显式传入的缺省资源按项目根目录解析。
-- 流程：`getHomeRunInfo` → `start`（先保存 recordId 再判 `canSport`；
-  `canSport=N` 抛 `RunNotPermittedError` 并带出 recordId，**不会**继续发送）→
-  按任务表分组发送 `splitPointCheating` → `finish`。
+`start` 之前会做三项校验，任一项不满足就**在建记录之前**报错，不会白跑：
 
-## 4. 人脸核验任务（runFaceStatus=Y）
+| 校验 | 判据 |
+|---|---|
+| 里程 | 实际上报里程（上限截断后）落在 `[raSingleMileageMin, raSingleMileageMax]` |
+| 步频 | 整表平均步频落在 `[raCadenceMin, raCadenceMax]` |
+| 踩点 | `manageList` 中 `marked=Y` 的数量 ≥ `raDislikes` |
 
-任务要求人脸时的行为取决于是否提供人脸源：
+里程校验用的是**截断后**的里程，不是任务表原始里程。所以配置了
+`max_mileage_km = 2.0` 时，一张 3.68 km 的表会按 2.00 km 上报并通过校验。
 
-- **未提供源**：立即抛 `FaceRequiredError` 停止（不默认放行）。请使用官方 App，
-  或按下面提供离线源。
-- **提供 `--face-photo 图片`**（方案 1）：按 APK 图像链处理照片
-  （EXIF 定向→JPEG→宽度>720 才缩图→>150KB 走质量阶梯 80..20，缩放与阶梯
-  作用于同一处理阶段图像）；标注 JSON **必须绑定该图片文件**：提供
-  `source_sha256`（内容哈希）绑定，并用 `bind_apply` 声明坐标系
-  （`{"after_exif":bool,"mirrored":bool}`，管线是 EXIF 摆正→可选镜像）。
-  `source_path` 仅作辅助核对——路径字符串不是内容身份，同路径文件被替换
-  必须能被识别。未绑定/哈希不符 = 预检失败（不能拿无主或过期标注宣称“这张图检测到了”）。
-- **提供 `--face-video 视频`**（方案 2）：逐帧（可配 `frame_step`）用同一质量门
-  选第一帧合格画面；需要 `opencv-python`。**检测标注必须逐帧**：JSON 提供
-  `{"frames":{"<帧号>":{box,points,...}}}`，未标注帧一律视为无检测（不挪用
-  其他帧标注凑数）。**没有逐帧标注能力时在 run/start 之前的预检即失败**
-  （发生在 `build_face_runner`，早于任何真实网络请求），不会先建任务再报错。
-- 两种源都必须配合 **`--face-detection 检测标注.json`** 提供人脸框/五点，
-  或自行注入检测器。检测模型（RetinaFace）**未随仓库移植**，且
-  **没有检测结果时不放行**（不默认通过质量门）。
-- `--face-mirror`：照片/视频源默认**不**镜像（与 APK 一致，仅在源本身是镜像预览时开启）；开启时标注 `bind_apply.mirrored` 必须同为 true，坐标系矛盾即拒绝。
-- `runFaceStatus=Y` 且 start 响应缺少 `randomList` 或 `faceTime`：必要参数
-  不完整，显式停止（不按“无限预算/默认放行”继续）。
+`start` 响应中 `canSport=N` 会抛出 `RunNotPermittedError` 并带出 `recordId`，
+**不会继续发送**。
 
-窗口调度语义与 APK W1 对齐，（首批跨窗不漏）：起点基线 0、`int(window_km*1000)` 跨越判定（点恰在边界算跨越）、
-非单调事件忽略、每窗口一次、在途互斥。**与 APK 相同**：会话在途期间跨过的
-窗口不会自动补触发。在此之上本脚本加了一道**更严格的策略**：finish 前
-检查实际经过范围内所有窗口，存在“未弹（含在途漏跨）或比对未确认成功”
-的窗口即拒绝发送 finish（不得静默收尾）。
-触发评估的时序如实记录：脚本在每批轨迹点上传**之后**才批内逐点评估
-（并非按轨迹时间/实时独立推进），同批内窗口弹出时刻受批次节奏影响——
-漏窗正确性由基线规则与结束前完整性检查兜底，但该时序差异是残留偏差
-（见 ARCHITECTURE §7）。
+### 5.2 自动真人化修正
 
-窗口预算与重试：语音引导 4s、比对失败后 ≤3 次立即重试（间隔 1s）+ 等待期
-每 3s 复用同一张图重发——这些形态与 APK 一致；但等待按**单调时钟经过
-时间**计（网络请求耗时计入预算；返修 R2：修复前按 sleep 计数，慢请求会
-把窗口拖出预算），整个窗口共用 `faceTime+4s` 截止（时钟双轨：utc/sign 用
-epoch 秒，预算用 client.mono）。请求的 connect/read 两段超时都按剩余
-预算裁剪，剩余不足 0.05s 直接停发（timeout 参数不等于整体截止；回调后
-仍核对窗口与等待阶段两道截止）。预算耗尽 → `expired`：该窗口
-`compare_success` 一律不记 Y，且**后续 split 与 finish 全部被守卫拦截**（不
-补发、不静默收尾）。`code=200 且 data.status!=Y` 仍是终端
-compare_failed（不重试）。
+旧抓包任务表有两类字段自相矛盾，脚本在**上传前**自动修正
+（只改 `runTime` / `runStep`，必要时平滑 `runMileage` 的 GPS 瞬移，**坐标不变**）：
 
-**已知策略偏差**：APK 在人脸失败路径会自动提交本次跑步数据（checkRunState），
-本脚本**不自动提交**，改为停止并保留现场——提交与否由人工决定。
-
-**支持范围声明**：结束检查的 url/list 为展示信息，不阻断。isCheat=Y 优先停止；
-仅 isStandard=Y 允许自动结束，缺失/未知/非 Y 均停止，不发尾批或 finish。
-人脸**注册/预登记链路不支持**——`run/getRlStatus`（登记
-状态预查询）与注册接口在本脚本中无调用点；遇到需要注册流程的任务应使用
-官方 App。**窗口断点持久化未实现**：进程中断不会恢复未完成窗口；完整性
-检查只覆盖当前进程观察到的里程。`recover_unfinished` 是纯函数，**未接入
-运行时**。
-
-人脸数据（faceBaseData）默认脱敏，不落日志明文；本脚本**不会调用注册接口**
-（`runFaceInfo` 注册链路存在但禁用，不做自动录入）。
-
-## 5. 离线演练 `--dry-run`
-
-```bash
-python main.py --dry-run [--dry-home dry_run_home.json]
-```
-
-全部请求走假传输（零网络），逐请求解开信封与业务体并报告：
-`可用持有私钥直接验证的信封 n/总数`。仓库默认密钥对公私不配对时 n=0 是**正常且如实**
-的（生产方向只需要公钥）。产物名固定为 `offline_client_compatibility`，
-禁止与任何"线上通过"表述混用。
-
-## 6. 线上字段对齐要点（脚本已自动处理，列出供排错）
-
-- 请求头 11 项与 APK 拦截器同集合同序（`Content-Type: application/json` 无
-  charset；不发 `Accept`/`Connection`；`User-Agent: okhttp/4.9.1`、
-  `Accept-Encoding: gzip` 由共享 Session 注入）。
-- `uuid` 每请求随机大写；`utc` 秒级；`sign = MD5(platform&utc&uuid&appsecret)`。
-- 仅 `splitPointCheating` 的 content 前置 gzip（JDK 容器头字节对齐）；人脸接口
-  **不** gzip。
-- finish 体 `sysEdition = "Android_" + 版本名`；`remake = "0|{}"`（APK 设备自检
-  在干净设备上的输出形态）。
-- Cookie：共享 Session 持久保存服务端 Set-Cookie（对齐 APK 的 CookieJar；
-  内容取决于服务端，不本地伪造）。
-
-## 7. 常见异常与处置
-
-| 异常 | 含义 | 处置 |
+| 问题 | 实测 | 修正 |
 |---|---|---|
-| `TransportOutcomeUnknown` | 连接失败/读超时，**请求结果未知** | 勿自动重发（服务器可能已入账），先查历史记录 |
-| `HttpStatusException` | 非 200 响应（消息已脱敏） | 同上按"结果未知"对待 |
-| `RunNotPermittedError` | 服务端拒绝开始（canSport=N），异常带 recordId | 按提示处理已开始的记录 |
-| `FaceRequiredError` | 任务要求人脸 / 状态缺失未知 | 用官方 App 或提供人脸源 |
-| `BusinessException` | 服务器明确拒绝（HTTP 200 业务 code!=200）：上传/finish 即时停止 | 按提示查 recordId 与最后确认位置，勿盲目重发 |
-| `FaceRunStopError` | 人脸窗口未确认通过 | 按提示"勿盲目重发"，人工核对 |
-| `DecodeException` | 响应无法按 明文/SM4/SM4+gzip 解码 | 保留现场报告，不要当成业务失败 |
+| 步数按固定周期累加 | 9 张 fch 表折算 **357~642 spm** | 按实际时长重分配总步数，目标 140~200 |
+| `Δt=0` 但有位移 | tasklist_6 有 346/1179 段 | 时间轴按本表平均速度重建 |
+| 单点 GPS 瞬移 | tasklist_3 有一处 **83 m/1 s** | 超出部分摊给邻段，总里程不变 |
 
-## 8. 第三次审查后的实测范围
+每条修正都会打印 `[真人化]` 一行。已经合理的表原样通过（幂等），
+非法输入（里程回退等）仍在校验阶段原样报错，不会被"修正"掩盖。
 
-照片和视频帧均在开始前完成内容绑定、质量门及压缩预检，并缓存最终输入；
-运行中替换原文件不会替换已验证的上传内容。当前依赖人工标注，不支持任意
-照片/视频的自动人脸检测。距离窗口仍在批内逐点处理，未实现按轨迹时间独立推进。
+**修正后的实际效果**（9 张 fch 表实测）：
 
-`live_probe.py` 只执行登录和准入查询，不创建跑步记录；登录会更新会话与本地
-配置，可能使手机会话失效，因此不属于零状态变更。退出码：0=准入状态 Y，
-2=缺主机配置，3=登录未完成，4=业务/数据失败，5=非 Y 或未知状态。
-准入 Y 仅允许继续受控实测，不代表人脸上传或成绩已获服务端接受。
+| 指标 | 修正前 | 修正后 |
+|---|---|---|
+| 步频 | 357~642 spm | 148~200 spm |
+| 步幅 | 0.35~0.56 m | 1.00~1.20 m |
+| 速度越界区间 | 1%~30% | ≈0% |
+| 总里程 | — | 完全不变 |
 
-请求连接/读取 timeout 受窗口及等待阶段剩余预算限制，截止时及迟到成功均丢弃；
-同步传输 timeout 不是可强制中断所有网络阻塞的总时限。
+### 5.3 步频硬边界（40~300 spm）
 
-## 9. 安全与合规提醒
+服务端要求平均步频在 **40~300 spm** 之间。脚本在两个层面保证：
 
-本工具仅用于理解与自查接口行为；请遵守所在学校的规定。任何字段对齐都不构成
-"绕过"承诺——服务端还有行为/数据层面的分析（配速分布、请求节奏、TLS/HTTP
-指纹等，见 `work_dir/develop_docs/WIRE_AUDIT.md`，不随仓库分发）。
+1. **夹取**：每包的 `runSteps`（split 体）与 `recodeCadence`（finish 体）
+   发送前统一夹进 `[40, 300]`，越界时打印 `[步频夹取]`。
+2. **分批边界避让**：单点包没有时长与位移，`runSteps` 只能是 0。
+   因此若发完这批恰好只剩 1 个点，本批少发一个（批内 > 2 点时）
+   或整批并入尾批（批内 ≤ 2 点时），保证**每个 split 包至少 2 点**。
+
+### 5.4 结束链
+
+```
+isStandard（状态检查）→ 尾批补发 → finish
+```
+
+- `isStandard` 与 `finish` 使用**同一份请求体**
+- `isCheat=Y` 优先停止；仅 `isStandard=Y` 允许自动结束
+- 检查失败、`data` 无效、`isStandard` 非 `Y` 或 `isCheat=Y` → 尾批与 `finish` 都不发送
+
+---
+
+## 6. 轨迹合成模式
+
+把一条已有轨迹形变成新轨迹，补齐时间、里程、步数、配速。
+**不识别地图、不做路径规划、不判断道路是否可通行。**
+
+```bash
+python tools/generate_route.py --config examples/routes/deform_xc.json \
+                               --output work_dir/route_preview.geojson
+python main.py --route-config examples/routes/deform_xc.json
+```
+
+算法：按弧长重采样成 5.5m 等间距折线 → 法向 OU 低频游走 → 二维相关漂移
+→ 稀疏指数衰减跳变 → 可选长度校准。
+
+参数与一致性规则见 [ROUTE_GENERATION.md](ROUTE_GENERATION.md)。
+
+> 合成模式对**要求踩点的任务**支持有限：需要轨迹实际经过打卡点，
+> 覆盖不足会被拒绝。打表模式的任务表本身已包含踩点信息，更省事。
+
+---
+
+## 7. 人脸核验任务
+
+任务 `runFaceStatus=Y` 时的行为：
+
+- **未提供人脸源**：立即停止（不默认放行）
+- **提供 `--face-photo`**：照片需配合 `--face-detection` 标注，
+  且标注必须用 `source_sha256` 绑定到该图片文件
+- **提供 `--face-video`**：需逐帧标注，未标注帧视为无检测
+
+**检测模型（RetinaFace）未移植**，标注必须人工提供，**没有检测结果时不放行**。
+
+图像链：EXIF 摆正（仅 3/6/8）→ 宽 >720 缩到 720 → >150KB 走质量阶梯 80..20。
+
+比对预算：`faceTime + 4s` 单调时钟，越界一律 `expired`。
+首传 → ≤3 次立即重试（1s 间隔）→ 等待期每 3s 重发。
+
+**人脸比对失败后不自动提交跑步数据**——这与 APK 行为不同，是刻意的策略偏差。
+
+---
+
+## 8. 离线演练
+
+```bash
+python main.py --dry-run --dry-home dry_run_home.json
+python panel.py    # 图形界面的"预检"等价于 dry-run
+```
+
+全部请求走假传输（零网络），逐请求解开信封与业务体。
+
+仓库自带两份夹具：
+
+| 文件 | 用途 |
+|---|---|
+| `dry_run_home.json` | 打表演练（3 个踩点、6~7 km） |
+| `tests/fixtures/dry_home_matching.json` | 测试专用（与 fixture 任务表匹配） |
+
+---
+
+## 9. 常见异常与处置
+
+| 报错 | 原因 | 处置 |
+|---|---|---|
+| `HTTP -1 … RemoteDisconnected` | 学校地址失效 | 用 `tools/getUrl_Id.py` 重查地址，**不要猜端口** |
+| `code=401` | token 失效 | 重新登录或更新 token |
+| `code=500` | 版本过低或密钥配置错 | 检查 `app_edition`、`cipherkey*` |
+| `生成步频不在任务允许范围` | offset 配置收窄了区间 | 把四项 offset 改为 0 |
+| `打表里程 X km 不在任务范围` | 任务表里程与学校要求不符 | 换一张表，或调整任务表 |
+| `打表步频 X spm 不在任务允许范围` | 同上 | 换表 |
+| `任务表只标记了 N 个踩点` | 踩点数不足 | 换一张踩点足够的表 |
+| `BusinessException` | 服务端明确拒绝 | 修数据/时机；后续请求一律不发 |
+| `TransportOutcomeUnknown` | 传输结果未知 | **先查服务端记录**，勿盲目重发 |
+| `FaceRequiredError` | 任务要求人脸但无源 | 用官方 App，或提供照片+标注 |
+
+**连接失败先核对学校地址。** 实时目录：
+
+```bash
+python tools/getUrl_Id.py --list
+python tools/getUrl_Id.py --school "你的学校全称" --write --config config.ini
+```
+
+---
+
+## 10. 安全与合规
+
+- **`config.ini` 含真实凭据**，已纳入 git 跟踪。提交前务必清空
+  `[User]` 段的 `token` / `device_id` / `uuid` / `sign`，或改用未跟踪的本地配置。
+- 面板只监听 `127.0.0.1`，不对外暴露。
+- 预检阶段绝不联网；上传只认已确认的预检计划。
+- 登录可能使手机端会话失效，首次失败即停，**勿重试**（防账号锁定）。
+- 本项目只证明"构造的包与反编译证据一致"，不承诺服务端接受或成绩有效。

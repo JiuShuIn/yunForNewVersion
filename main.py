@@ -103,6 +103,25 @@ strides = None
 md5key = None
 platform = None
 
+# 打表回放的步频真人化（见 Yun_For_New._normalize_replay_steps）：
+# SANE = 认为"已经像真人"的区间，落在这里的表原样不动；TARGET = 重分配时的目标夹取范围。
+# 依据：成年业余跑者 150~190 spm；[110,220] 是宽于该范围的"无需干预"区间。
+REPLAY_SPM_SANE = (110.0, 220.0)
+REPLAY_SPM_TARGET = (140.0, 200.0)
+# 相邻点 Δm/Δt 的合理区间（米/秒）：0.8 m/s ≈ 20:50 min/km 的慢走，8 m/s ≈ 2:05 min/km
+# 的冲刺。落在区间外的区间视为抓包时间轴错误，按整段平均速度重算（见 _normalize_replay_timeline）。
+REPLAY_SPEED_BOUNDS = (0.8, 8.0)
+# 本地里程硬上限（公里）。0 = 不限制，只按学校下发的 raSingleMileageMax 截断。
+# 学校规定"一次只能跑 2km"时设 2.0：无论服务端下发多少，到点即截断并进入结束链。
+max_mileage_km = 0.0
+# 学校要求的最少踩点数（0 = 只按任务下发的 raDislikes 判）。
+# 合工大要求"踩点数至少大于三个点"，设为 3 后取 max(raDislikes, 3)。
+min_dislikes = 0
+# 上传契约的硬边界：任何一包（split 的 runSteps、finish 的 recodeCadence）的平均步频
+# 都必须落在该闭区间内。这是发送前的最后一道夹取，与上面的"目标区间"不同——
+# 目标区间只决定往哪修，这里决定"绝不发出去"的边界。
+SERVER_SPM_BOUNDS = (40.0, 300.0)
+
 _CONF = configparser.ConfigParser()  # set_args 加载后的配置快照
 _CLIENT: YunClient | None = None     # set_args 构建的统一客户端（构造不发网络）
 _SM2_BOX: SM2Box | None = None
@@ -168,6 +187,20 @@ def set_args(conf_path: str):
     min_consume = float(conf.get("Run", "min_consume"))
     max_consume = float(conf.get("Run", "max_consume"))
     strides = float(conf.get("Run", "strides"))
+    global max_mileage_km
+    try:
+        max_mileage_km = float(conf.get("Run", "max_mileage_km", fallback="0") or 0)
+    except ValueError:
+        raise ValueError('config [Run] max_mileage_km 必须是数字（0 = 不限制）')
+    if max_mileage_km < 0 or not math.isfinite(max_mileage_km):
+        raise ValueError('config [Run] max_mileage_km 必须是非负有限数（0 = 不限制）')
+    global min_dislikes
+    try:
+        min_dislikes = int(conf.get("Run", "min_dislikes", fallback="0") or 0)
+    except ValueError:
+        raise ValueError('config [Run] min_dislikes 必须是整数（0 = 只按任务下发值）')
+    if min_dislikes < 0:
+        raise ValueError('config [Run] min_dislikes 不能为负')
 
     PUBLIC_KEY = b64decode(conf.get("Yun", "PublicKey"))
     PRIVATE_KEY = b64decode(conf.get("Yun", "PrivateKey"))
@@ -661,14 +694,26 @@ class Yun_For_New:
         self.strides = strides
         self.schoolId = data['schoolId']
         self.raRunArea = data['raRunArea']
-        self.raDislikes = data['raDislikes']
-        self.raMinDislikes = data['raDislikes']
+        # 学校要求的最少踩点数与任务下发值取大：合工大要求"至少 3 个点"，
+        # 即使服务端下发的 raDislikes 更小，也按学校要求校验。
+        self.server_dislikes = int(data['raDislikes'] or 0)
+        self.raDislikes = max(self.server_dislikes, int(min_dislikes or 0))
+        self.raMinDislikes = self.raDislikes
         self.raSingleMileageMin = data['raSingleMileageMin'] + single_mileage_min_offset
         self.raSingleMileageMax = data['raSingleMileageMax'] + single_mileage_max_offset
         self.server_min_mileage_km = float(data['raSingleMileageMin'])
-        self.distance_cap_m = float(data['raSingleMileageMax']) * 1000
-        if not math.isfinite(self.distance_cap_m) or self.distance_cap_m <= 0:
+        self.server_cap_m = float(data['raSingleMileageMax']) * 1000
+        if not math.isfinite(self.server_cap_m) or self.server_cap_m <= 0:
             raise DecodeException('任务下发的 raSingleMileageMax 必须为有限正数，无法执行里程上限结束')
+        # 本地硬上限与学校上限取小：学校规定"一次只能跑 2km"时，
+        # 即便服务端下发了更大的上限，也在本地设的值处截断并结束。
+        local_cap_m = float(max_mileage_km) * 1000
+        self.local_cap_m = local_cap_m if local_cap_m > 0 else 0.0
+        self.distance_cap_m = (min(self.server_cap_m, local_cap_m)
+                               if local_cap_m > 0 else self.server_cap_m)
+        if self.local_cap_m and self.local_cap_m < self.server_cap_m:
+            print(f"[里程上限] 本地硬上限 {local_cap_m/1000:.3f} km 小于学校下发 "
+                  f"{self.server_cap_m/1000:.3f} km，按本地上限截断")
         # APK SportRunMapActivity:4345,4351,4189：passPointNum<10 回退 60，
         # 缓存点数严格大于阈值时发送。旧 fixture 未提供此字段，沿用配置以兼容。
         point_limit = data.get('passPointNum')
@@ -1117,6 +1162,171 @@ class Yun_For_New:
                 int(point['runTime'])-int(previous['runTime']))
         return True
 
+    def _normalize_replay_timeline(self, points):
+        """打表时间轴修正：只动 runTime（和必要时的 runMileage 平滑），不动坐标。
+
+        为什么要修：旧抓包表的 runTime 有两类自相矛盾的区间——
+        1) Δt=0 但位移 > 0（服务端算出无穷大速度，client_speed 把配速钳到 900）；
+        2) Δt>0 但 Δm/Δt 落在真人跑步的 0.8~8 m/s 之外。
+        实测 tasks_fch 9 张表里这类区间占 1%~30%（tasklist_6 高达 30%），
+        另有单点 83 m 的 GPS 瞬移（tasklist_3）。
+
+        做法（简单且可证）：
+        1. 先平滑 GPS 瞬移：把单段超出 `上限速度 × 原 Δt` 的部分按比例摊给邻段，
+           总里程不变。
+        2. 时间轴按**本表平均速度**逐段重建：Δt_i = round(Δm_i / v_avg)，位移为 0
+           的段沿用原 Δt。因此每个区间都等于整段平均速度，必然落在合法区间内，
+           且总时长 = 距离/v_avg ≈ 原总时长（差异仅来自逐段取整）。
+        3. 零位移段（原地停表）保留原 Δt，最多 1 秒，不影响速度判定。
+
+        正常表（所有区间已合法）原样返回，不做任何改动（幂等）。
+        重建后总时长与原始值的差异会打印出来——finish 的 duration 由
+        _update_task_summary 按实际点列重算，始终与点列自洽。
+        """
+        n = len(points)
+        if n < 2:
+            return points
+        mileage = [float(p.get('runMileage', 0) or 0) for p in points]
+        times = [int(float(p.get('runTime', 0) or 0)) for p in points]
+        duration = times[-1] - times[0]
+        distance = mileage[-1] - mileage[0]
+        if duration <= 0 or distance <= 0:
+            return points
+        lo, hi = REPLAY_SPEED_BOUNDS
+        v_avg = distance / duration
+        dms = [mileage[i] - mileage[i - 1] for i in range(1, n)]
+        dts = [times[i] - times[i - 1] for i in range(1, n)]
+
+        # --- 1. GPS 瞬移平滑（总里程守恒） ---
+        spikes = [i for i, (dm, dt) in enumerate(zip(dms, dts)) if dm > hi * max(dt, 1)]
+        if spikes:
+            pool = sorted(d for d in dms if d > 0)
+            cap = pool[len(pool) // 2] * 0.5      # 每段最多多吸收半个中位增量
+            for i in spikes:
+                allowed = hi * max(dts[i], 1)
+                excess = dms[i] - allowed
+                dms[i] = allowed
+                for j in list(range(i + 1, len(dms))) + list(range(i - 1, -1, -1)):
+                    if excess <= 0:
+                        break
+                    take = min(cap, excess)
+                    dms[j] += take
+                    excess -= take
+                if excess > 0:      # 摊不完就保留（宁可速度越界，也不改总里程）
+                    dms[i] += excess
+            mileage = [mileage[0]]
+            for d in dms:
+                mileage.append(mileage[-1] + d)
+            for i, p in enumerate(points):
+                p['runMileage'] = mileage[i]
+            print(f"[真人化] 里程尖峰平滑：{len(spikes)} 段 GPS 瞬移（> {hi:g} m/s × Δt）"
+                  f"摊给邻段，总里程 {distance:.1f}m 不变")
+
+        # --- 2. 时间轴按平均速度重建（幂等：已合法的表不动） ---
+        bad = [i for i, (dm, dt) in enumerate(zip(dms, dts))
+               if dm > 0 and (dt <= 0 or not (lo <= dm / dt <= hi))]
+        if not bad:
+            return points
+        # 有位移的段：先按平均速度给浮点秒数，再按"最大余数法"取整到整数秒，
+        # 使 ΣΔt 严格等于原总时长（取整误差不会累积成几十秒的时长漂移）。
+        moving = [i for i in range(len(dms)) if dms[i] > 0]
+        still = [i for i in range(len(dms)) if dms[i] <= 0]
+        budget = duration - sum(min(dts[i], 1) for i in still)
+        # 每段至少要 1 秒才能给出合法速度；预算不够时只能延长总时长
+        # （原始表里 Δt=0 的段太多，物理上装不进原来的时长）。
+        extended = max(0, len(moving) - budget)
+        budget = max(budget, len(moving))
+        wsum = sum(dms[i] for i in moving)
+        raw = {i: budget * dms[i] / wsum for i in moving}
+        new = [0] * len(dms)
+        for i in still:
+            new[i] = min(dts[i], 1)
+        for i in moving:
+            new[i] = max(1, int(math.floor(raw[i])))
+        # 余数最大者优先补到 budget（最大余数法，保证总和精确）
+        short = budget - sum(new[i] for i in moving)
+        for i in sorted(moving, key=lambda k: -(raw[k] - math.floor(raw[k])))[:max(0, short)]:
+            new[i] += 1
+        t = times[0]
+        for i, p in enumerate(points):
+            if i == 0:
+                p['runTime'] = t
+                continue
+            t += new[i - 1]
+            p['runTime'] = t
+        tail = "" if not extended else f"（原表 Δt=0 段过多，总时长 +{extended}s）"
+        print(f"[真人化] 时间轴重建：{len(bad)}/{len(dms)} 个区间速度越界或 Δt=0，"
+              f"按本表平均速度 {v_avg:.2f} m/s 重分配；总时长 {duration}s{tail}")
+        return points
+
+    def _normalize_replay_steps(self, points):
+        """打表点列步数的真人化修正（只动 runStep，不动坐标/里程/时间）。
+
+        为什么要修：旧抓包表（tasks_fch/*.json）的 runStep 是**按固定周期累加**的
+        采样值，不是真机按段累积。实测 tasks_fch 9 张表首末点差值折算 357~642 spm，
+        而同一张表的逐点 Δm/Δt 算出来是 4.5~5.4 min/km —— 两个字段互相矛盾，
+        属于最容易被服务端规则命中的形态。同一张表里 Δt 还混着 0/1/2/3/6/8 秒，
+        Δt=0 的相邻点配速被 client_speed 钳到 900 上限。
+
+        做法（保总步数、只重分配）：
+        1. 目标步频取 task 表自报 recodeCadence；越界（不在 [110,220]）时按配速
+           经验式 160 + 90×(5.5 - pace) 推算，再夹进 [140,200]。
+        2. 目标总步数 = 目标步频 × 实际时长 / 60，按各点累计里程的**实际增量**
+           比例分配（逐点 floor 累加，保证总和严格等于目标、且单调不回退）。
+        3. 时长按实际 runTime 跨度算；首点非零的旧表同样处理（差值语义不变）。
+
+        幂等：已经合理的表（首末差值折算在 [110,220]）原样返回，不做任何改动。
+        """
+        if len(points) < 2:
+            return points
+        steps = [int(p.get('runStep', 0) or 0) for p in points]
+        times = [int(float(p.get('runTime', 0) or 0)) for p in points]
+        duration = times[-1] - times[0]
+        step_delta = steps[-1] - steps[0]
+        if duration <= 0:
+            return points
+        current_spm = step_delta * 60.0 / duration
+        if REPLAY_SPM_SANE[0] <= current_spm <= REPLAY_SPM_SANE[1]:
+            return points
+
+        mileage = [float(p.get('runMileage', 0) or 0) for p in points]
+        distance = mileage[-1] - mileage[0]
+        if distance <= 0:
+            return points
+
+        cadence = None
+        try:
+            cadence = float(self.task_map['data'].get('recodeCadence'))
+        except (TypeError, ValueError, AttributeError):
+            cadence = None
+        # 表自报的 recodeCadence 也可能本身就是那个错误值（tasks_fch 实测 228~288），
+        # 只在它落在合理区间时才采信，否则按配速经验式推算。
+        if not cadence or not math.isfinite(cadence) or not (
+                REPLAY_SPM_SANE[0] <= cadence <= REPLAY_SPM_SANE[1]):
+            pace = (duration / 60.0) / (distance / 1000.0)
+            cadence = 160 + 90 * (5.5 - pace)
+        cadence = min(REPLAY_SPM_TARGET[1], max(REPLAY_SPM_TARGET[0], cadence))
+
+        total_steps = int(round(cadence * duration / 60.0))
+        base = steps[0]
+        previous_step = base
+        for i, p in enumerate(points):
+            if i == 0:
+                p['runStep'] = base
+                continue
+            # 按实际里程增量分配；用累计比例取整，避免逐点舍入漂移
+            share = (mileage[i] - mileage[0]) / distance
+            target = base + int(round(total_steps * share))
+            p['runStep'] = max(target, previous_step)   # 单调不回退
+            previous_step = p['runStep']
+        # 末点钉住总步数（取整误差最多 1 步）
+        points[-1]['runStep'] = base + total_steps
+        new_spm = total_steps * 60.0 / duration
+        if new_spm != current_spm:
+            print(f"[真人化] 步数按实际时长重分配：{current_spm:.0f} spm → {new_spm:.0f} spm"
+                  f"（总步数 {step_delta} → {total_steps}，里程/时间/坐标未改动）")
+        return points
+
     def _update_task_summary(self, points, planned_duration):
         """以实际上报点和经过时间更新 finish 汇总。"""
         if not points:
@@ -1127,8 +1337,23 @@ class Yun_For_New:
         data['recordMileage'] = float(points[-1]['runMileage']) / 1000
         if data['recordMileage'] > 0:
             data['recodePace'] = data['duration'] / 60 / data['recordMileage']
-        if points[-1]['runStep'] and data['duration'] > 0:
-            data['recodeCadence'] = int(points[-1]['runStep']) * 60 / data['duration']
+        if data['duration'] > 0:
+            step_delta = int(points[-1]['runStep']) - int(points[0]['runStep'])
+            if step_delta > 0:
+                data['recodeCadence'] = step_delta * 60 / data['duration']
+        # 上传契约：finish 的 recodeCadence 与 split 的 runSteps 同口径（平均步频），
+        # 一并夹进 [40, 300]。改步数会让 recodeCadence 与点列步数不一致，
+        # 因此这里同步改末点步数，使两处由同一组数据算出。
+        lo, hi = SERVER_SPM_BOUNDS
+        cad = float(data.get('recodeCadence') or 0)
+        if data['duration'] > 0 and cad and not (lo <= cad <= hi):
+            target = min(hi, max(lo, cad))
+            total = int(round(target * data['duration'] / 60.0))
+            delta = total - (int(points[-1]['runStep']) - int(points[0]['runStep']))
+            points[-1]['runStep'] = int(points[-1]['runStep']) + delta
+            data['recodeCadence'] = target
+            print(f"[步频夹取] finish 汇总 {cad:.0f} spm 超出 [{lo:.0f}, {hi:.0f}]，"
+                  f"末点步数同步调整为 {target:.0f} spm")
 
     def do_generated_route(self, task):
         """按逐点时间调度；复用既有上传、人脸停止门与结束链。"""
@@ -1140,6 +1365,7 @@ class Yun_For_New:
         previous = 0
         last_time, last_mileage = 0, 0.0
         actual_points = []
+        effective_total = self._effective_point_count(task['data']['pointsList'])
         print(f"[路径生成] {len(task['data']['pointsList'])} 点，"
               f"{task['data']['recordMileage']:.4f} km，{task['data']['duration']} 秒")
         for source in task['data']['pointsList']:
@@ -1163,9 +1389,10 @@ class Yun_For_New:
             last_time, last_mileage = elapsed, point['runMileage']
             points.append(point)
             if len(points) == self.upload_batch_size:
-                self.split_by_points_map(points)
-                self._last_confirmed_mileage_m = int(point['runMileage'])
-                points = []
+                to_send, points = self._partition_batch(points, actual_points, effective_total)
+                if to_send:
+                    self.split_by_points_map(to_send)
+                    self._last_confirmed_mileage_m = int(to_send[-1]['runMileage'])
             self._face_on_mileage(point['runMileage'])
             if reached_cap:
                 print(f'[里程上限] 已达任务上限 {self.distance_cap_m/1000:.3f} km；进入结束链')
@@ -1228,14 +1455,22 @@ class Yun_For_New:
                     mileage < 0 or planned_time < 0 or steps < 0):
                 raise ValueError('打表点的里程、时间或累计步数回退或非法')
             previous_mileage, previous_time, previous_steps = mileage, planned_time, steps
+        # 时间轴与步频的真人化：旧抓包表存在 Δt=0/配速越界与步数固定周期累加两类
+        # 自相矛盾。放在合法性校验之后——非法输入必须原样报错，不能被"修正"掩盖。
+        source_points = self._normalize_replay_timeline(source_points)
+        source_points = self._normalize_replay_steps(source_points)
         if float(source_points[0]['runMileage']) > self.distance_cap_m:
             raise ValueError('打表首点已超过任务里程上限')
+        # 里程/步频/踩点在 start 之前校验：打表模式原先只截上限、不查下限，
+        # 表里里程不足学校最低要求时会照常上传，最后才被服务端判不合格。
+        self._validate_replay_task(source_points)
         points = []
         emitted = []
         epoch = int(self.client.now())
         started = self.client.mono()
         previous_planned = 0
         reached_cap = False
+        effective_total = self._effective_point_count(source_points)
         for point in tqdm(source_points, leave=True):
             self._face_guard('轨迹点推进')
             planned = int(point['runTime'])
@@ -1268,9 +1503,10 @@ class Yun_For_New:
             emitted.append(dict(point_changed, _planned_time=planned))
             points.append(point_changed)
             if len(points) == self.upload_batch_size:
-                self.split_by_points_map(points)
-                self._last_confirmed_mileage_m = int(float(points[-1]['runMileage']))
-                points = []
+                to_send, points = self._partition_batch(points, emitted, effective_total)
+                if to_send:
+                    self.split_by_points_map(to_send)
+                    self._last_confirmed_mileage_m = int(float(to_send[-1]['runMileage']))
             self._face_on_mileage(float(point_changed['runMileage']))
             if reached_cap:
                 print(f'[里程上限] 已达任务上限 {self.distance_cap_m/1000:.3f} km；进入结束链')
@@ -1290,8 +1526,130 @@ class Yun_For_New:
             print(f"[尾批] 暂存尾部 {len(points)} 点，未在批末发送；"
                   "将由 finish 链按『状态检查 → 尾批 → finish』顺序处理")
 
+    def _effective_point_count(self, source_points):
+        """返回实际会上传的点数（里程上限截断后）。
+
+        里程单调递增，所以"首个达到上限的点"就是最后一个上报点。
+        用于在发送前预判批次边界，避免出现**只有 1 个点**的批次——
+        单点包没有时长也没有位移，runSteps 在数学上只能是 0，
+        无法满足服务端"平均步频 40~300"的要求。
+        """
+        cap = self.distance_cap_m
+        if cap > 0:
+            for i, p in enumerate(source_points):
+                if float(p['runMileage']) >= cap:
+                    return i + 1
+        return len(source_points)
+
+    def _validate_replay_task(self, source_points):
+        """打表任务在 start 之前按学校下发参数做完整性校验。
+
+        与 validate_generated_route 同一口径，但作用对象是**已有任务表**：
+        - 里程：实际上报里程（受上限截断后）必须落在
+          [raSingleMileageMin, raSingleMileageMax]；
+        - 步频：整表平均步频必须落在 [raCadenceMin, raCadenceMax]；
+        - 踩点：表里 marked=Y 的数量必须 >= raDislikes。
+        任一不满足都在建记录之前报错，避免白跑一次并留下不合格记录。
+        """
+        n = self._effective_point_count(source_points)
+        used = source_points[:n]
+        if len(used) < 2:
+            raise ValueError('打表任务至少需要两个轨迹点')
+        # 末点会被 _cap_point 截到恰好 distance_cap_m，所以这里按截断后的值算，
+        # 不能用原始表的里程（原值可能超出上限几个点距）。
+        km = min(float(used[-1]['runMileage']), self.distance_cap_m) / 1000.0
+        floor_km = max(float(self.raSingleMileageMin), self.server_min_mileage_km)
+        ceil_km = self.distance_cap_m / 1000.0
+        if km + 1e-9 < floor_km or km > ceil_km + 1e-9:
+            raise ValueError(
+                f"打表里程 {km:.4f} km 不在任务范围 {floor_km}～{ceil_km} km"
+                f"（表内实际可上报里程；上限截断后计算）")
+        duration = int(used[-1]['runTime']) - int(used[0]['runTime'])
+        if duration > 0:
+            steps = int(used[-1]['runStep']) - int(used[0]['runStep'])
+            spm = steps * 60.0 / duration
+            lo, hi = float(self.raCadenceMin), float(self.raCadenceMax)
+            if not lo <= spm <= hi:
+                raise ValueError(
+                    f"打表步频 {spm:.1f} spm 不在任务允许范围 {lo:g}～{hi:g}")
+        need = max(1, int(self.raDislikes))
+        if int(self.raDislikes) > 0:
+            manage = (self.task_map.get('data') or {}).get('manageList') or []
+            marked = sum(1 for m in manage if str(m.get('marked', '')).strip().upper() == 'Y')
+            if not manage:
+                raise ValueError(
+                    f"任务要求踩点 {need} 个，但任务表没有 manageList（无法证明踩点）")
+            if marked < need:
+                raise ValueError(
+                    f"任务表只标记了 {marked} 个踩点，任务要求 {need} 个")
+
+    def _partition_batch(self, points, emitted, effective_total):
+        """满批时切出"本批要发的点"和"留给后续的点"。
+
+        单点包没有时长与位移，`runSteps` 只能是 0，无法满足服务端
+        "平均步频 40~300"。因此要避免出现只剩 1 个点的批次：
+
+        - 正常情况：整批发出，返回 (points, [])。
+        - 发完这批后恰好只剩 1 个点：
+            * 本批 > 2 点 → 只发前 len-1 个，留 1 个与尾点合并成 2 点尾批；
+            * 本批 <= 2 点 → 整批不发，全部并入尾批（尾批 >= 3 点）。
+        - 其余情况（含末尾 0 点、>= 2 点）整批发出。
+
+        只决定分批边界，不修改任何点内容。
+        """
+        if effective_total - len(emitted) != 1:
+            return points, []
+        if len(points) > 2:
+            return points[:-1], [points[-1]]
+        return [], points
+
+    def _clamp_batch_steps(self, points):
+        """把一包点的平均步频夹进 SERVER_SPM_BOUNDS，保证 runSteps 不越界。
+
+        `_build_split_body` 的 `runSteps = StepNumber / 分钟数`，即这一包的平均步频。
+        打表表里偶尔会有"整包几乎没位移"或"整包只有几秒"的极端批次，换算出的步频
+        可能落到 40 以下或 300 以上。这里在发送前按同一包的时长反推合法步数并
+        重分配（保持单调、只改 runStep），不改变任何坐标/里程/时间。
+
+        无法夹取时（该包时长为 0）保持原样——这种包本身就无法表达步频，
+        由调用方的既有校验负责拦截。
+        """
+        lo, hi = SERVER_SPM_BOUNDS
+        if not points:
+            return points
+        if len(points) < 2:
+            # 单点尾批：没有时长和位移，runSteps 恒为 0，无法用"步数/时间"表达。
+            # 服务端要的是平均步频，单点包只能保持 0（APK 的 sendLastPoints 也是
+            # 末点单发）；这里显式记录，避免被误当成越界。
+            return points
+        duration_s = int(points[-1]['runTime']) - int(points[0]['runTime'])
+        if duration_s <= 0:
+            return points
+        steps = [int(p['runStep']) for p in points]
+        step_delta = steps[-1] - steps[0]
+        spm = step_delta * 60.0 / duration_s
+        if lo <= spm <= hi:
+            return points
+        target = min(hi, max(lo, spm))
+        total = int(round(target * duration_s / 60.0))
+        base = steps[0]
+        mileage = [float(p['runMileage']) for p in points]
+        distance = mileage[-1] - mileage[0]
+        previous = base
+        for i, p in enumerate(points):
+            if i == 0:
+                continue
+            share = (mileage[i] - mileage[0]) / distance if distance > 0 else i / (len(points) - 1)
+            p['runStep'] = max(previous, base + int(round(total * share)))
+            previous = p['runStep']
+        points[-1]['runStep'] = base + total
+        print(f"[步频夹取] 本包平均 {spm:.0f} spm 超出 [{lo:.0f}, {hi:.0f}]，"
+              f"按同一时长重分配为 {target:.0f} spm（坐标/里程/时间未改动）")
+        return points
+
     def split_by_points_map(self, points):
         self._face_guard("splitPoint 批次上传")   # R2：任何入口直接调用同样被拦截
+        points = self._clamp_batch_steps(points)
         data = _build_split_body(self.crsRunRecordId, self.userName, self.schoolId,
                                  points, self.strides)
         # 返修 R3：业务 code 解析；服务器拒绝（如 code=500）→ BusinessException

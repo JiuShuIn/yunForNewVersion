@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>云运动 · 本地工作台</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+:root{
+  --nav:#101a2c;--nav2:#16233a;--line:#e3e9f2;--bg:#f5f7fb;--surface:#fff;
+  --ink:#16213a;--ink2:#3d4a63;--muted:#77839a;--hint:#9aa6b8;
+  --blue:#3465e0;--blue2:#2851c4;--cyan:#12b5ad;--green:#1f9d63;
+  --red:#d33f4a;--amber:#c98213;--radius:14px;
+  --shadow:0 8px 28px rgba(28,48,88,.06);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);line-height:1.6;
+  font-family:Inter,"Segoe UI",-apple-system,"Microsoft YaHei","PingFang SC",sans-serif}
+button,input,select{font:inherit}
+button{cursor:pointer}
+code,.mono{font-family:"Cascadia Code",Consolas,monospace}
+
+.shell{display:grid;grid-template-columns:232px minmax(0,1fr);min-height:100vh}
+.side{background:linear-gradient(170deg,#16233a,#0e1728);color:#fff;padding:26px 14px;
+  display:flex;flex-direction:column;gap:6px;position:sticky;top:0;height:100vh}
+.brand{display:flex;align-items:center;gap:11px;padding:0 10px 26px}
+.brand .mk{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;
+  background:linear-gradient(140deg,rgba(18,181,173,.45),rgba(52,101,224,.35));
+  border:1px solid rgba(160,220,230,.25);font-size:18px}
+.brand b{font-size:15px;letter-spacing:.04em;display:block;line-height:1.25}
+.brand span{font-size:9.5px;color:#8fa5c2;letter-spacing:.16em}
+.step{display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:10px;
+  color:#a6b6cf;font-size:13px;font-weight:600;cursor:pointer;border:1px solid transparent}
+.step:hover{background:rgba(255,255,255,.06);color:#eef6ff}
+.step.on{background:linear-gradient(95deg,rgba(52,101,224,.3),rgba(18,181,173,.08));
+  color:#fff;border-color:rgba(140,190,255,.14);box-shadow:inset 3px 0 0 #4fd4cc}
+.step .n{width:21px;height:21px;border-radius:50%;border:1.5px solid currentColor;
+  display:grid;place-items:center;font-size:11px;flex:none}
+.side .foot{margin-top:auto;padding:16px 12px 0;border-top:1px solid rgba(150,185,225,.13);
+  font-size:11px;color:#7f97b6}
+.side .foot b{color:#39d7aa;font-weight:700}
+
+.main{min-width:0}
+.top{height:66px;background:rgba(255,255,255,.94);border-bottom:1px solid var(--line);
+  display:flex;align-items:center;justify-content:space-between;padding:0 34px;gap:14px}
+.crumb{font-size:12px;color:var(--muted);font-weight:600}
+.crumb b{color:#41506d}
+.pill{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:20px;
+  background:#f2fbf8;border:1px solid #d9efe8;color:#2f8272;font-size:11px;font-weight:700}
+.pill i{width:6px;height:6px;border-radius:50%;background:#26c196}
+
+.body{padding:30px 34px 70px;max-width:1400px}
+.pane{display:none}
+.pane.on{display:block;animation:fade .2s ease}
+@keyframes fade{from{opacity:.55;transform:translateY(5px)}to{opacity:1;transform:none}}
+h1{font-size:25px;font-weight:800;letter-spacing:-.02em;margin:0 0 6px}
+.sub{color:var(--muted);font-size:13px;margin:0 0 24px}
+
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  box-shadow:var(--shadow);padding:20px 22px;margin-bottom:18px}
+.card h2{font-size:14px;font-weight:750;margin:0 0 14px;color:#26344e;
+  display:flex;align-items:center;justify-content:space-between;gap:10px}
+.card h2 small{font-weight:500;color:var(--hint);font-size:11px}
+
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:18px;align-items:start}
+@media(max-width:1000px){.grid2{grid-template-columns:1fr}}
+
+label.f{display:block;margin-bottom:11px}
+label.f span{display:block;font-size:11.5px;color:var(--ink2);font-weight:650;margin-bottom:4px}
+label.f input,label.f select{width:100%;padding:8px 11px;border:1px solid #dbe3ef;
+  border-radius:9px;background:#fbfcfe;color:var(--ink);font-size:13px}
+label.f input:focus,label.f select:focus{outline:none;border-color:#8fb0f0;background:#fff;
+  box-shadow:0 0 0 3px rgba(52,101,224,.1)}
+label.f input[readonly]{background:#f4f6fa;color:var(--muted)}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.sec-title{font-size:11px;letter-spacing:.14em;color:#7c8aa3;font-weight:800;
+  margin:18px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.sec-title:first-child{margin-top:0}
+
+.btn{padding:9px 17px;border-radius:9px;border:1px solid #d6dfec;background:#fff;
+  color:var(--ink2);font-size:13px;font-weight:650}
+.btn:hover{background:#f7f9fd;border-color:#c3d0e4}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn.primary:hover{background:var(--blue2)}
+.btn.go{background:var(--green);border-color:var(--green);color:#fff}
+.btn.go:hover{filter:brightness(.94)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.sm{padding:5px 11px;font-size:12px}
+
+#map{height:430px;border-radius:12px;border:1px solid var(--line);background:#eef2f8}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin-top:10px}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;
+  vertical-align:middle}
+
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:12.5px}
+.kv dt{color:var(--muted);white-space:nowrap}
+.kv dd{margin:0;font-weight:650;color:var(--ink2);text-align:right}
+
+.steplist{display:flex;flex-direction:column;gap:8px}
+.stepline{border:1px solid var(--line);border-radius:10px;background:#fbfcfe;overflow:hidden}
+.stepline summary{padding:10px 14px;display:flex;align-items:center;gap:11px;
+  cursor:pointer;list-style:none;font-size:13px}
+.stepline summary::-webkit-details-marker{display:none}
+.stepline .ic{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;
+  font-size:11px;font-weight:800;flex:none;background:#eef3fb;color:#4a6ea8}
+.stepline .ic.s{background:#e9f7f2;color:#1f8a63}
+.stepline .ic.f{background:#fdf0e8;color:#b96a25}
+.stepline .ic.st{background:#f0eefc;color:#6250b8}
+.stepline .t{flex:1;font-weight:650;color:#2b3a55}
+.stepline .m{font-size:11.5px;color:var(--muted);font-family:Consolas,monospace}
+.stepline pre{margin:0;padding:11px 14px;background:#111b2b;color:#c7d6ea;font-size:11.5px;
+  overflow:auto;max-height:300px;line-height:1.55}
+.warn{background:#fff8ec;border:1px solid #f2dfba;color:#8a5a10;padding:10px 14px;
+  border-radius:9px;font-size:12.5px;margin-bottom:9px}
+.err{background:#fdf0f1;border:1px solid #f0c8cc;color:#a52b35;padding:11px 14px;
+  border-radius:9px;font-size:12.5px;margin-bottom:12px}
+
+.confirm{display:flex;align-items:flex-start;gap:10px;background:#eef7f2;border:1px solid #cfe8da;
+  padding:13px 16px;border-radius:10px;font-size:13px;color:#1d6b48;margin:14px 0}
+.confirm input{margin-top:3px;width:16px;height:16px;flex:none}
+
+.bar{height:8px;background:#e9eef6;border-radius:6px;overflow:hidden;margin:10px 0 6px}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#3465e0,#12b5ad);
+  transition:width .35s ease}
+#log{background:#101b2b;color:#c3d3e8;border-radius:10px;padding:13px 15px;font-size:12px;
+  font-family:"Cascadia Code",Consolas,monospace;height:330px;overflow:auto;white-space:pre-wrap;
+  line-height:1.6}
+.badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700}
+.badge.ok{background:#e8f7ef;color:#1f8a63}
+.badge.bad{background:#fdecee;color:#b8323c}
+.badge.idle{background:#eef2f8;color:#6c7c95}
+table.req{width:100%;border-collapse:collapse;font-size:12.5px}
+table.req th{text-align:left;font-weight:700;color:var(--muted);font-size:11px;
+  padding:0 0 7px;border-bottom:1px solid var(--line);letter-spacing:.04em}
+table.req td{padding:8px 0;border-bottom:1px solid #f0f3f8;vertical-align:top}
+table.req tr:last-child td{border-bottom:none}
+table.req .lab{font-weight:650;color:var(--ink2)}
+table.req .note{display:block;font-size:10.5px;color:var(--hint);margin-top:2px}
+table.req .act{font-family:Consolas,monospace;font-weight:650}
+.hide{display:none!important}
+.toast{position:fixed;right:24px;bottom:24px;background:#1b2940;color:#fff;padding:11px 17px;
+  border-radius:10px;font-size:13px;box-shadow:0 10px 30px rgba(10,20,40,.28);z-index:9999}
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="side">
+    <div class="brand"><div class="mk">◎</div>
+      <div><b>云运动工作台</b><span>LOCAL CONSOLE</span></div></div>
+    <div class="step on" data-go="1"><span class="n">1</span>配置信息</div>
+    <div class="step" data-go="2"><span class="n">2</span>选择路线</div>
+    <div class="step" data-go="3"><span class="n">3</span>上传预检</div>
+    <div class="step" data-go="4"><span class="n">4</span>执行上传</div>
+    <div class="foot">
+      <b>适用范围</b><br>
+      本面板仅针对 <b>合肥工业大学 fch 打表模式</b>做了验证与优化。<br>
+      合成轨迹、人脸核验、其他校区等场景请用 <code>python main.py</code>。<br><br>
+      全部请求经本机代理<br><b>127.0.0.1</b> · 仅本机可访问
+    </div>
+  </aside>
+
+  <div class="main">
+    <div class="top">
+      <div class="crumb">工作台 / <b id="crumb">配置信息</b></div>
+      <div class="pill" style="background:#fff8ec;border-color:#f2dfba;color:#8a5a10">
+        <i style="background:#c98213"></i>仅支持合工大 fch 打表模式
+      </div>
+    </div>
+
+    <div class="body">
+      <!-- ============ 1 配置 ============ -->
+      <section class="pane on" id="pane1">
+        <h1>配置信息</h1>
+        <p class="sub">读取自 config.ini。敏感字段显示为掩码，未修改则不会写回文件。</p>
+        <div class="card">
+          <h2>账号与服务器 <small>token / 密码等敏感项留空或保持掩码即不修改</small></h2>
+          <div id="cfgForm"></div>
+          <div style="margin-top:16px;display:flex;gap:10px;align-items:center">
+            <button class="btn primary" onclick="saveCfg()">保存配置</button>
+            <button class="btn" onclick="loadCfg()">重新读取</button>
+            <span id="cfgMsg" style="font-size:12.5px;color:var(--muted)"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 2 选路 ============ -->
+      <section class="pane" id="pane2">
+        <h1>选择路线</h1>
+        <p class="sub">打表模式：直接回放一张已有的任务表。地图显示轨迹与打卡点。</p>
+        <div class="warn" style="margin-bottom:16px">
+          本面板的预检、校验与真人化修正只针对<b>合肥工业大学 fch 校区的打表模式</b>
+          做过完整验证。其他校区任务表虽然也能选，但未经验证；合成轨迹、人脸核验等
+          场景请直接使用 <code>python main.py</code>。
+        </div>
+        <div class="grid2">
+          <div class="card">
+            <h2>轨迹预览 <small id="trackInfo"></small></h2>
+            <div id="map"></div>
+            <div class="legend">
+              <span><i style="background:#3465e0"></i>轨迹</span>
+              <span><i style="background:#1f9d63"></i>已踩点</span>
+              <span><i style="background:#c98213"></i>未踩点</span>
+            </div>
+            <div style="font-size:11.5px;color:var(--hint);margin-top:6px">
+              底图为高德瓦片（GCJ-02）。任务表坐标本身就是 GCJ-02，
+              两者同一坐标系，<b>不做任何转换</b>即可对齐。
+            </div>
+          </div>
+          <div class="card">
+            <h2>任务表</h2>
+            <label class="f"><span>校区目录</span>
+              <select id="campus" onchange="fillTasks()"></select></label>
+            <label class="f"><span>任务表</span>
+              <select id="task" onchange="loadTrack()"></select></label>
+            <div style="margin-top:8px;display:flex;flex-direction:column;gap:9px">
+              <button class="btn" onclick="loadTrack()">刷新预览</button>
+              <button class="btn primary" onclick="go(3);doPreview()">下一步：预检</button>
+            </div>
+            <div class="sec-title" style="margin-top:20px">本表概况</div>
+            <dl class="kv" id="trackKv"><dt>—</dt><dd>请选择任务表</dd></dl>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 3 预检 ============ -->
+      <section class="pane" id="pane3">
+        <h1>上传预检</h1>
+        <p class="sub">用本地假传输把整条链路完整跑一遍，逐条列出<b>将要发给服务器的每个请求</b>。此步骤不联网。</p>
+        <div id="previewErr"></div>
+        <div class="grid2">
+          <div class="card">
+            <h2>请求明细 <small>点开任意一条查看完整请求体</small></h2>
+            <div class="steplist" id="stepList">
+              <div style="color:var(--hint);font-size:13px">尚未预检</div>
+            </div>
+          </div>
+          <div>
+            <div class="card">
+              <h2>学校要求对照</h2>
+              <table class="req" id="reqTable">
+                <thead><tr><th>项目</th><th>要求</th><th>本次提交</th><th></th></tr></thead>
+                <tbody><tr><td colspan="4" style="color:var(--hint)">尚未预检</td></tr></tbody>
+              </table>
+            </div>
+            <div class="card">
+              <h2>汇总</h2>
+              <dl class="kv" id="sumKv"><dt>—</dt><dd>尚未预检</dd></dl>
+              <div class="sec-title" style="margin-top:16px">校验结论</div>
+              <div id="sumWarn"></div>
+            </div>
+            <div class="card">
+              <div class="confirm">
+                <input type="checkbox" id="ack" onchange="syncGo()">
+                <label for="ack">我已核对以上请求明细，确认无误，可以上传。</label>
+              </div>
+              <button class="btn go" id="goBtn" style="width:100%" disabled
+                      onclick="startUpload()">开始上传</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 4 上传 ============ -->
+      <section class="pane" id="pane4">
+        <h1>执行上传</h1>
+        <p class="sub">上传过程中请勿关闭页面。结果会实时回传。</p>
+        <div class="card">
+          <h2>进度 <span id="progPhase" class="badge idle">未开始</span></h2>
+          <div class="bar"><i id="progBar"></i></div>
+          <div style="font-size:12.5px;color:var(--muted)" id="progText">等待开始</div>
+        </div>
+        <div class="card">
+          <h2>日志</h2>
+          <div id="log">—</div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+let MAP=null, TRACK=null, CARDS=null, PREVIEWED=null;
+const $=id=>document.getElementById(id);
+
+function go(n){
+  document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));
+  $('pane'+n).classList.add('on');
+  document.querySelectorAll('.step').forEach(s=>
+    s.classList.toggle('on', s.dataset.go===String(n)));
+  $('crumb').textContent = {1:'配置信息',2:'选择路线',3:'上传预检',4:'执行上传'}[n];
+  if(n===2 && MAP) setTimeout(()=>MAP.invalidateSize(),60);
+}
+document.querySelectorAll('.step').forEach(s=>s.onclick=()=>go(+s.dataset.go));
+
+function toast(msg){
+  const d=document.createElement('div');d.className='toast';d.textContent=msg;
+  document.body.appendChild(d);setTimeout(()=>d.remove(),2600);
+}
+
+/* ---------------- 配置 ---------------- */
+const LABELS={Yun:{school_host:'学校地址',school_id:'学校 ID',app_edition:'客户端版本',
+  md5key:'签名密钥',platform:'平台',school_login_url:'登录路径',yun_host:'云端地址',
+  publickey:'SM2 公钥',privatekey:'SM2 私钥',cipherkey:'SM4 密钥',
+  cipherkeyencrypted:'SM4 密文',school_name:'学校名称'},
+  User:{token:'token',device_id:'设备 ID',device_name:'设备名称',sys_edition:'系统版本',
+  sys_version:'系统版本(备用)',uuid:'UUID',utc:'utc',sign:'sign',map_key:'高德 key'},
+  Run:{split_count:'每批点数',min_distance:'最短里程',allow_overflow_distance:'里程余量',
+  single_mileage_min_offset:'里程下限偏移',single_mileage_max_offset:'里程上限偏移',
+  cadence_min_offset:'步频下限偏移',cadence_max_offset:'步频上限偏移',
+  strides:'步幅',min_consume:'最快配速',max_consume:'最慢配速',exclude_points:'排除点'},
+  Login:{username:'账号',password:'密码'}};
+const SEC_TITLE={Yun:'服务器与密钥',User:'账号与设备',Run:'跑步参数',Login:'登录凭据'};
+
+async function loadCfg(){
+  const r=await fetch('/api/config'); const cfg=await r.json();
+  if(cfg.error){$('cfgMsg').textContent=cfg.error;return;}
+  let html='';
+  for(const sec of Object.keys(cfg)){
+    html+=`<div class="sec-title">${SEC_TITLE[sec]||sec}</div><div class="row">`;
+    for(const k of Object.keys(cfg[sec])){
+      const v=cfg[sec][k], masked=(v==='__MASKED__');
+      const lab=(LABELS[sec]&&LABELS[sec][k])||k;
+      html+=`<label class="f"><span>${lab} <code style="color:#9aa6b8">${k}</code></span>
+        <input data-sec="${sec}" data-key="${k}" value="${masked?'':v.replace(/"/g,'&quot;')}"
+        placeholder="${masked?'已设置（留空不修改）':''}"></label>`;
+    }
+    html+='</div>';
+  }
+  $('cfgForm').innerHTML=html;
+  $('cfgMsg').textContent='';
+}
+async function saveCfg(){
+  const payload={};
+  document.querySelectorAll('#cfgForm input').forEach(i=>{
+    const sec=i.dataset.sec,k=i.dataset.key;
+    payload[sec]=payload[sec]||{};
+    payload[sec][k]= i.value.trim()===''? '__KEEP__' : i.value;
+  });
+  const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(payload)});
+  const j=await r.json();
+  if(j.error){$('cfgMsg').textContent='保存失败：'+j.error;return;}
+  $('cfgMsg').textContent = j.changed.length? ('已更新：'+j.changed.join(', ')) : '没有变化';
+  loadCfg();
+}
+
+/* ---------------- 选路 ---------------- */
+async function initMeta(){
+  const m=await (await fetch('/api/meta')).json();
+  window.__CAP__ = m.max_mileage_km || 0;
+  const sel=$('campus');
+  sel.innerHTML=Object.keys(m.campuses).map(c=>`<option>${c}</option>`).join('');
+  // 默认选 fch
+  const fch=Object.keys(m.campuses).find(c=>c.includes('fch'));
+  if(fch) sel.value=fch;
+  fillTasks();
+}
+function fillTasks(){
+  const m=window.__META__;
+  fetch('/api/meta').then(r=>r.json()).then(m=>{
+    const files=m.campuses[$('campus').value]||[];
+    $('task').innerHTML=files.map(f=>`<option>${f}</option>`).join('');
+    loadTrack();
+  });
+}
+async function loadTrack(){
+  const campus=$('campus').value, task=$('task').value;
+  if(!task) return;
+  const j=await (await fetch(`/api/track?campus=${campus}&task=${task}`)).json();
+  if(j.error){$('trackInfo').textContent=j.error;return;}
+  TRACK=j.track; CARDS=j.cards;
+  $('trackInfo').textContent=`${j.track.length} 点 · ${j.km.toFixed(2)} km`;
+  drawTrack();
+  const marked=(j.cards||[]).filter(c=>c.marked).length;
+  const cap=window.__CAP__;
+  const capRow = cap ? `<dt>本地里程上限</dt><dd style="color:#c98213">${cap.toFixed(2)} km（到点自动结束）</dd>` : '';
+  $('trackKv').innerHTML=
+    `<dt>轨迹点</dt><dd>${j.track.length}</dd>
+     <dt>表内里程</dt><dd>${j.km.toFixed(3)} km</dd>
+     ${capRow}
+     <dt>打卡点</dt><dd>${marked} / ${(j.cards||[]).length}</dd>`;
+}
+function drawTrack(){
+  if(!MAP){
+    MAP=L.map('map',{zoomControl:true}).setView([31.77,117.20],15);
+    // 底图必须与轨迹同坐标系：任务表坐标是 GCJ-02（高德坐标系），
+    // 所以用高德瓦片。换成 OSM/WGS-84 底图会让整条轨迹偏移约 500 m。
+    L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',{
+      subdomains:['1','2','3','4'],maxNativeZoom:18,maxZoom:20,
+      attribution:'© 高德'}).addTo(MAP);
+  }
+  MAP.eachLayer(l=>{if(!(l instanceof L.TileLayer))MAP.removeLayer(l);});
+  if(!TRACK||!TRACK.length) return;
+  const line=L.polyline(TRACK.map(p=>[p[1],p[0]]),{color:'#3465e0',weight:3,opacity:.85}).addTo(MAP);
+  MAP.fitBounds(line.getBounds(),{padding:[24,24]});
+  (CARDS||[]).forEach(c=>{
+    L.circleMarker([c.lat,c.lon],{radius:7,weight:2,
+      color:c.marked?'#1f9d63':'#c98213',fillColor:c.marked?'#1f9d63':'#c98213',
+      fillOpacity:.55}).addTo(MAP);
+  });
+}
+
+/* ---------------- 预检 ---------------- */
+async function doPreview(){
+  const campus=$('campus').value, task=$('task').value;
+  $('stepList').innerHTML='<div style="color:var(--hint);font-size:13px">预检中…</div>';
+  $('previewErr').innerHTML=''; $('sumKv').innerHTML=''; $('sumWarn').innerHTML='';
+  $('ack').checked=false; syncGo();
+  const j=await (await fetch(`/api/preview?campus=${campus}&task=${task}`)).json();
+  if(j.error){
+    $('previewErr').innerHTML=`<div class="err">预检失败：${j.error}</div>`;
+    $('stepList').innerHTML=renderSteps(j.steps||[]);
+    PREVIEWED=null; syncGo(); return;
+  }
+  PREVIEWED=j;
+  $('stepList').innerHTML=renderSteps(j.steps);
+  const s=j.summary;
+  renderReq(s.requirements||[]);
+  $('sumKv').innerHTML=`
+    <dt>批次</dt><dd>${s.batches}</dd>
+    <dt>上报点数</dt><dd>${s.total_points}</dd>
+    <dt>实际上报里程</dt><dd>${s.km} km</dd>
+    <dt>里程上限</dt><dd>${s.cap_m?(s.cap_m/1000).toFixed(2):'—'} km${s.local_cap_m?' <span class="badge ok">本地限制</span>':''}</dd>
+    <dt>平均步频</dt><dd>${s.cadence} spm</dd>
+    <dt>批内步频</dt><dd>${s.spm_min} ~ ${s.spm_max} <span class="badge ${s.spm_ok?'ok':'bad'}">${s.spm_ok?'合规':'越界'}</span></dd>
+    <dt>配速</dt><dd>${s.pace} min/km</dd>
+    <dt>踩点</dt><dd>${s.dislikes}</dd>
+    <dt>耗时</dt><dd>${s.duration} 秒</dd>
+    <dt>系统版本</dt><dd>${s.sys_edition||'—'}</dd>
+    <dt>客户端版本</dt><dd>${s.app_edition||'—'}</dd>`;
+  $('sumWarn').innerHTML=(j.warnings||[]).map(w=>`<div class="warn">${w}</div>`).join('')
+    || '<div style="color:var(--green);font-size:12.5px">未发现明显问题</div>';
+  syncGo();
+}
+function renderReq(reqs){
+  const tb=$('reqTable').querySelector('tbody');
+  if(!reqs.length){ tb.innerHTML='<tr><td colspan="4" style="color:var(--hint)">无</td></tr>'; return; }
+  tb.innerHTML=reqs.map(r=>{
+    let badge='';
+    if(r.ok===true) badge='<span class="badge ok">满足</span>';
+    else if(r.ok===false) badge='<span class="badge bad">不满足</span>';
+    return `<tr>
+      <td class="lab">${r.label}${r.note?`<span class="note">${r.note}</span>`:''}</td>
+      <td>${r.required}</td>
+      <td class="act">${r.actual}</td>
+      <td style="text-align:right">${badge}</td></tr>`;
+  }).join('');
+}
+function renderSteps(steps){
+  if(!steps.length) return '<div style="color:var(--hint);font-size:13px">没有请求</div>';
+  return steps.map((s,i)=>{
+    const ic=s.kind==='split'?'s':(s.kind==='finish'?'f':(s.kind==='standard'?'st':''));
+    let meta='';
+    if(s.kind==='split')
+      meta=`${s.points} 点 · ${s.mileage} m · ${s.runSteps} spm · 配速 ${s.speeds}`;
+    else if(s.kind==='finish')
+      meta=`${(s.body||{}).recordMileage} km · ${(s.body||{}).recodeCadence} spm`;
+    const body=s.body?JSON.stringify(s.body,null,2):'（无请求体）';
+    return `<details class="stepline"><summary>
+      <span class="ic ${ic}">${i+1}</span>
+      <span class="t">${s.title}</span>
+      <span class="m">${meta}</span></summary>
+      <pre>${body.replace(/</g,'&lt;')}</pre></details>`;
+  }).join('');
+}
+function syncGo(){
+  $('goBtn').disabled = !(PREVIEWED && $('ack').checked);
+}
+
+/* ---------------- 上传 ---------------- */
+let pollTimer=null;
+async function startUpload(){
+  const campus=$('campus').value, task=$('task').value;
+  const r=await fetch('/api/upload',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({campus,task})});
+  const j=await r.json();
+  if(j.error){toast(j.error);return;}
+  go(4);
+  if(!pollTimer) pollTimer=setInterval(pollStatus,1000);
+  pollStatus();
+}
+async function pollStatus(){
+  const j=await (await fetch('/api/upload/status')).json();
+  const p=j.progress||{};
+  const total=p.total||0, sent=p.sent||0;
+  // 分母是"实际会上报的点数"，与批量（服务端 passPointNum 决定）无关；
+  // 进度不会超过 100%，批次只作辅助信息展示。
+  const pct = total? Math.min(100, Math.round(sent/total*100)) : (p.phase==='done'?100:0);
+  $('progBar').style.width=pct+'%';
+  let txt = p.detail || '';
+  if(total) txt = `已上传 ${sent} / ${total} 点（${pct}%）　批次 ${p.batches_sent||0}，每批 ${p.batch_size||'?'} 点`;
+  $('progText').textContent=txt;
+  const badge=$('progPhase');
+  badge.className='badge '+(p.phase==='done'?'ok':(p.phase==='error'?'bad':'idle'));
+  badge.textContent={idle:'未开始',starting:'启动中',running:'上传中',done:'已完成',error:'失败'}[p.phase]||p.phase;
+  $('log').textContent=j.log||'—';
+  $('log').scrollTop=$('log').scrollHeight;
+  if(p.phase==='done'||p.phase==='error'){clearInterval(pollTimer);pollTimer=null;}
+}
+
+/* ---------------- 启动 ---------------- */
+loadCfg();
+initMeta();
+</script>
+</body>
+</html>

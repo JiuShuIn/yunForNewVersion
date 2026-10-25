@@ -30,7 +30,7 @@ def loaded():
 def _home(**over):
     entry = {
         "id": 900001, "schoolId": "100", "raType": "T1", "raRunArea": "A",
-        "raDislikes": 2, "raSingleMileageMin": 6.0, "raSingleMileageMax": 7.0,
+        "raDislikes": 2, "raSingleMileageMin": 1.0, "raSingleMileageMax": 7.0,
         "raCadenceMin": 120, "raCadenceMax": 190, "runFaceStatus": "N",
         "points": "117.200001,31.770001|117.200101,31.770101",
     }
@@ -91,8 +91,13 @@ def test_gzip_apk_header_bytes_match_jdk():
     out = yh.gzip_apk(raw)
     assert out[:10] == bytes.fromhex("1f8b08000000000000ff")
     assert gzip.decompress(out) == raw
-    default = gzip.compress(raw)
-    assert (default[4:8] != b"\x00\x00\x00\x00") or (default[9] != 0xFF)
+    # 这个用例原本断言 "gzip.compress 的默认头与 APK 头不同"，用来反证 gzip_apk
+    # 是手工构造的。但 Python 3.14 起 gzip.compress 默认改为 mtime=0 / OS=0xff，
+    # 正好与 APK 头一致，断言随解释器版本翻转。改为直接钉住实现契约：
+    # 头字节固定 + 与 zlib 默认流不同（deflate 层由 compressobj 产生）。
+    import zlib
+    assert out[4:8] == b"\x00\x00\x00\x00" and out[9] == 0xFF
+    assert out[10:] != zlib.compress(raw)[2:-4]
 
 
 # ------------------------------------------------------------ split 体

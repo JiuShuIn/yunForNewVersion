@@ -1,0 +1,21 @@
+{
+  "msg": "dry-run fixture（虚构数据，非真实抓包）",
+  "code": 200,
+  "data": {
+    "cralist": [
+      {
+        "id": 900001,
+        "schoolId": "100",
+        "raType": "T1",
+        "raRunArea": "DRY-AREA",
+        "raDislikes": 2,
+        "raSingleMileageMin": 1.0,
+        "raSingleMileageMax": 2.0,
+        "raCadenceMin": 40,
+        "raCadenceMax": 300,
+        "runFaceStatus": "N",
+        "points": "117.200001,31.770001|117.200101,31.770101"
+      }
+    ]
+  }
+}

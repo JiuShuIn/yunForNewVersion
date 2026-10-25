@@ -7,14 +7,16 @@
 
 ```
 main.py            入口 + 旧全局快照兼容层 + 跑步会话(Yun_For_New)
+                   + 打表真人化(_normalize_replay_*) + start 前校验
                    + 线上载荷投影(_build_split_body/_build_finish_body/_project_card_point)
 yun_http.py        协议边界：请求构造/信封加密/响应解码/脱敏/异常分类/假传输
 yun_face.py        人脸管线：图像处理/质量门(APK K() 等价)/比对状态机/窗口调度/输入源
+panel.py           本地图形工作台（配置/选路/预检/上传，前端 panel_ui.html）
 tools/Login.py     账号密码登录（学校目录探测 + 写回 config）
 tools/drift.py     轨迹漂移；tools/pace_changer.py 配速工具；tools/proxy.py 抓包辅助
 tools/getUrl_Id.py 学校地址/id 探测；history.py 历史记录拉取（显式注入客户端）
 tools/EasyAutoRunServer/  旧定时批量启动壳（run.sh 仍走 main.py）
-tests/             99 项离线测试（无任何真实网络）
+tests/             300 项离线测试（无任何真实网络）
 config.ini         设备/密钥/跑步参数；tasks_*/tasklist_*.json 任务表（抓包模板）
 dry_run_home.json  --dry-run 的 getHomeRunInfo 假响应
 ```
@@ -118,7 +120,7 @@ recover_unfinished                o2(:3337-3368) 断点恢复分类（纯函数�
 - 旧函数签名（`default_post/getsign/encrypt_sm4/...`）保留为薄委托；
   `default_post(headers=..., gen_sign=True)` 显式报错（不再静默丢头部）。
 
-## 6. 测试分层（99 项，全部离线）
+## 6. 测试分层（300 项，全部离线）
 
 | 文件 | 层 |
 |---|---|
@@ -127,6 +129,8 @@ recover_unfinished                o2(:3337-3368) 断点恢复分类（纯函数�
 | test_main_phase_a.py / test_phase_a_fixes.py | 会话流程、登录连续性、canSport/faceTime、CLI 契约 |
 | test_rework_final.py | 返修 R1-R6 回归：逐点窗口事件、预算截止、业务拒绝终止、步骤同包一致、压缩目标对象、标注绑定；二返修 S1 结束链顺序、S2 全量预检、S3 超时预算 |
 | test_yun_face.py | 质量门几何、图像链、比对状态机、窗口调度、照片→线上格式 E2E |
+| test_replay_realism.py | 打表真人化：时间轴重建/步频重分配/GPS 瞬移平滑、批边界不产生单点包、start 前里程步频踩点校验 |
+| test_panel.py | 图形工作台：预检零网络、请求明细完整、上传守卫、进度计数、配置掩码不落盘 |
 
 命名约束：自动验收产物只叫 `offline_client_compatibility`；测试反向锁死
 "线上已验证"类文案不得出现。

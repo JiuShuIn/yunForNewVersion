@@ -105,7 +105,7 @@ def _yun_with_start(data, status="N", face_runner=None):
                           sleep=lambda s: None)
     home = {"code": 200, "data": {"cralist": [{
         "id": 1, "schoolId": "100", "raType": "T1", "raRunArea": "A",
-        "raDislikes": 1, "raSingleMileageMin": 6.0, "raSingleMileageMax": 7.0,
+        "raDislikes": 1, "raSingleMileageMin": 1.0, "raSingleMileageMax": 7.0,
         "raCadenceMin": 120, "raCadenceMax": 190, "runFaceStatus": status,
         "points": "117.2,31.7|117.3,31.8"}]}}
     return M.Yun_For_New(auto_generate_task=False, client=client, home_info=home,

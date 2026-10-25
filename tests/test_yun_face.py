@@ -525,7 +525,7 @@ class TestFaceRunnerE2E:
             "code": 200, "msg": "fixture",
             "data": {"cralist": [{
                 "id": 900001, "schoolId": "100", "raType": "T1", "raRunArea": "A",
-                "raDislikes": 1, "raSingleMileageMin": 6.0, "raSingleMileageMax": 7.0,
+                "raDislikes": 1, "raSingleMileageMin": 1.0, "raSingleMileageMax": 7.0,
                 "raCadenceMin": 120, "raCadenceMax": 190, "runFaceStatus": "Y",
                 "points": "117.2,31.7|117.3,31.8",
             }], "dry_face_windows": [2.0], "dry_face_compare_status": "Y"},

@@ -21,7 +21,7 @@ TASKS = os.path.join(FIXTURES, "tasks")
 def _home(**over):
     entry = {
         "id": 900001, "schoolId": "100", "raType": "T1", "raRunArea": "A",
-        "raDislikes": 2, "raSingleMileageMin": 6.0, "raSingleMileageMax": 7.0,
+        "raDislikes": 2, "raSingleMileageMin": 1.0, "raSingleMileageMax": 7.0,
         "raCadenceMin": 120, "raCadenceMax": 190, "runFaceStatus": "N",
         "points": "117.200001,31.770001|117.200101,31.770101",
     }
@@ -114,7 +114,7 @@ def test_loader_preserves_run_step(loaded):
 # ---------------------------------------------------------------- dry-run（§3-A.5）
 def test_dry_run_uses_fake_transport_only(loaded, capsys):
     args = argparse.Namespace(dry_run=True, drift=False,
-                              dry_home=os.path.join(M.PROJECT_ROOT, "dry_run_home.json"))
+                              dry_home=os.path.join(FIXTURES, "dry_home_matching.json"))
     client = M.run_dry(CFG, TASKS, args)
     fake = client.transport
     paths = [urlparse(c["url"]).path for c in fake.calls]
